@@ -1,0 +1,3 @@
+GET /index.html SONION/1.0
+Host: hello.son
+Accept: text/html
