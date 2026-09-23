@@ -1,15 +1,16 @@
-use crate::{limits, ProtocolError};
-
-const CRLF: &str = "\r\n";
+use crate::{
+    head::{find_header_end, parse_headers, CRLF, VERSION},
+    limits, ProtocolError,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
-    Ok, // 200
-    MovedPermanently, // 301
-    Found, // 302
-    BadRequest, // 400
-    NotFound, // 404
-    PayloadTooLarge, // 413
+    Ok,                  // 200
+    MovedPermanently,    // 301
+    Found,               // 302
+    BadRequest,          // 400
+    NotFound,            // 404
+    PayloadTooLarge,     // 413
     InternalServerError, // 500
 }
 
@@ -128,8 +129,10 @@ impl Response {
     }
     pub fn parse(bytes: &[u8]) -> Result<Self, ProtocolError> {
         let header_end = find_header_end(bytes).ok_or(ProtocolError::UnexpectedEof)?;
-        if header_end > limits::MAX_HEADERS + 64 {
-            return Err(ProtocolError::HeadersTooLarge { max: limits::MAX_HEADERS });
+        if header_end > limits::MAX_STATUS_LINE + limits::MAX_HEADERS {
+            return Err(ProtocolError::HeadersTooLarge {
+                max: limits::MAX_HEADERS,
+            });
         }
         let head = std::str::from_utf8(&bytes[..header_end])
             .map_err(|_| ProtocolError::MalformedLine("non-utf8 head".into()))?;
@@ -137,7 +140,7 @@ impl Response {
         let status_line = lines.next().ok_or(ProtocolError::UnexpectedEof)?;
         let mut parts = status_line.splitn(3, ' ');
         let version = parts.next().unwrap_or("");
-        if version != "SONION/1.0" {
+        if version != VERSION {
             return Err(ProtocolError::MalformedLine(format!(
                 "bad version: {status_line}"
             )));
@@ -147,22 +150,13 @@ impl Response {
             .and_then(|c| c.parse().ok())
             .ok_or_else(|| ProtocolError::MalformedLine(status_line.into()))?;
         let status = Status::from_code(code)?;
-        let mut headers = Vec::new();
-        for line in lines {
-            if line.is_empty() {
-                continue;
-            }
-            let (name, value) = line
-                .split_once(':')
-                .ok_or_else(|| ProtocolError::InvalidHeader(line.into()))?;
-            let name = name.trim();
-            if name.is_empty() {
-                return Err(ProtocolError::InvalidHeader(line.into()));
-            }
-            headers.push((name.to_string(), value.trim().to_string()));
-        }
+        let headers = parse_headers(lines)?;
         let body_bytes = &bytes[header_end + 4..]; // skip CRLFCRLF
-        let mut resp = Self { status, headers, body: Vec::new() };
+        let mut resp = Self {
+            status,
+            headers,
+            body: Vec::new(),
+        };
         if resp.is_chunked() {
             resp.body = parse_chunked_body(body_bytes)?;
         } else if let Some(len) = resp.get_header("Content-Length") {
@@ -170,7 +164,9 @@ impl Response {
                 .parse()
                 .map_err(|_| ProtocolError::InvalidHeader("Content-Length".into()))?;
             if len > limits::MAX_BODY {
-                return Err(ProtocolError::BodyTooLarge { max: limits::MAX_BODY });
+                return Err(ProtocolError::BodyTooLarge {
+                    max: limits::MAX_BODY,
+                });
             }
             if body_bytes.len() < len {
                 return Err(ProtocolError::UnexpectedEof);
@@ -179,10 +175,36 @@ impl Response {
         }
         Ok(resp)
     }
-}
-
-fn find_header_end(bytes: &[u8]) -> Option<usize> {
-    bytes.windows(4).position(|w| w == b"\r\n\r\n")
+    pub fn parse_head(bytes: &[u8]) -> Result<Self, ProtocolError> {
+        let header_end = find_header_end(bytes).ok_or(ProtocolError::UnexpectedEof)?;
+        if header_end > limits::MAX_STATUS_LINE + limits::MAX_HEADERS {
+            return Err(ProtocolError::HeadersTooLarge {
+                max: limits::MAX_HEADERS,
+            });
+        }
+        let head = std::str::from_utf8(&bytes[..header_end])
+            .map_err(|_| ProtocolError::MalformedLine("non-utf8 head".into()))?;
+        let mut lines = head.split(CRLF);
+        let status_line = lines.next().ok_or(ProtocolError::UnexpectedEof)?;
+        let mut parts = status_line.splitn(3, ' ');
+        let version = parts.next().unwrap_or("");
+        if version != VERSION {
+            return Err(ProtocolError::MalformedLine(format!(
+                "bad version: {status_line}"
+            )));
+        }
+        let code: u16 = parts
+            .next()
+            .and_then(|c| c.parse().ok())
+            .ok_or_else(|| ProtocolError::MalformedLine(status_line.into()))?;
+        let status = Status::from_code(code)?;
+        let headers = parse_headers(lines)?;
+        Ok(Self {
+            status,
+            headers,
+            body: Vec::new(),
+        })
+    }
 }
 
 fn parse_chunked_body(bytes: &[u8]) -> Result<Vec<u8>, ProtocolError> {
@@ -205,14 +227,18 @@ fn parse_chunked_body(bytes: &[u8]) -> Result<Vec<u8>, ProtocolError> {
             return Ok(body);
         }
         if body.len() + size > limits::MAX_BODY {
-            return Err(ProtocolError::BodyTooLarge { max:limits::MAX_BODY });
+            return Err(ProtocolError::BodyTooLarge {
+                max: limits::MAX_BODY,
+            });
         }
         if rest.len() < size + 2 {
             return Err(ProtocolError::UnexpectedEof);
         }
         body.extend_from_slice(&rest[..size]);
         if &rest[size..size + 2] != b"\r\n" {
-            return Err(ProtocolError::InvalidChunk("missing CRLF after chunk".into()));
+            return Err(ProtocolError::InvalidChunk(
+                "missing CRLF after chunk".into(),
+            ));
         }
         rest = &rest[size + 2..];
     }
@@ -286,5 +312,80 @@ mod tests {
             Response::parse(b"SONION/1.0 200 ok\r\nContent-Length: 100\r\n\r\nshort"),
             Err(ProtocolError::UnexpectedEof)
         ));
+    }
+    #[test]
+    fn chunked_encode_single_chunk() {
+        let resp = Response::new(Status::Ok, b"hello".to_vec());
+        let wire = resp.serialize_chunked(1024);
+        let wire_str = String::from_utf8(wire).unwrap();
+        assert!(wire_str.contains("Transfer-Encoding: chunked"));
+        assert!(!wire_str.contains("Content-Length"));
+        assert!(wire_str.contains("5\r\nhello\r\n"));
+        assert!(wire_str.ends_with("0\r\n\r\n"));
+    }
+    #[test]
+    fn chunked_encode_multiple_chunks() {
+        let resp = Response::new(Status::Ok, b"abcdefgh".to_vec());
+        let wire = resp.serialize_chunked(3);
+        let wire_str = String::from_utf8(wire).unwrap();
+        assert!(wire_str.contains("3\r\nabc\r\n"));
+        assert!(wire_str.contains("3\r\ndef\r\n"));
+        assert!(wire_str.contains("2\r\ngh\r\n"));
+        assert!(wire_str.ends_with("0\r\n\r\n"));
+    }
+    #[test]
+    fn chunked_encode_empty_body() {
+        let resp = Response::new(Status::Ok, Vec::new());
+        let wire = resp.serialize_chunked(64);
+        let wire_str = String::from_utf8(wire).unwrap();
+        assert!(wire_str.ends_with("0\r\n\r\n"));
+    }
+    #[test]
+    fn chunked_roundtrip() {
+        let original = Response::new(Status::Ok, b"the quick brown fox".to_vec());
+        let wire = original.serialize_chunked(4);
+        let parsed = Response::parse(&wire).expect("should parse");
+        assert_eq!(parsed.status, Status::Ok);
+        assert!(parsed.is_chunked());
+        assert_eq!(parsed.body, b"the quick brown fox");
+    }
+    #[test]
+    fn parse_rejects_oversized_body() {
+        let mut resp = format!(
+            "SONION/1.0 200 ok\r\nContent-Length: {}\r\n\r\n",
+            limits::MAX_BODY + 1
+        );
+        resp.push_str(&"x".repeat(100));
+        assert!(Response::parse(resp.as_bytes()).is_err());
+    }
+    #[test]
+    fn parse_rejects_bad_chunk_size() {
+        let wire =
+            b"SONION/1.0 200 ok\r\nTransfer-Encoding: chunked\r\n\r\nZZ\r\nhello\r\n0\r\n\r\n";
+        assert!(Response::parse(wire).is_err());
+    }
+    #[test]
+    fn parse_rejects_truncated_chunk() {
+        let wire = b"SONION/1.0 200 ok\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel";
+        assert!(Response::parse(wire).is_err());
+    }
+    #[test]
+    fn binary_body_roundtrip() {
+        let body: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+        let mut resp = Response::new(Status::Ok, body.clone());
+        resp.set_header("Content-Type", "image/png");
+        assert_eq!(Response::parse(&resp.serialize()).unwrap().body, body);
+        assert_eq!(
+            Response::parse(&resp.serialize_chunked(777)).unwrap().body,
+            body
+        );
+    }
+    #[test]
+    fn parse_head_response_ignores_content_length() {
+        let wire = b"SONION/1.0 200 ok\r\nContent-Type: text/html\r\nContent-Length: 13\r\n\r\n";
+        let resp = Response::parse_head(wire).unwrap();
+        assert_eq!(resp.status, Status::Ok);
+        assert_eq!(resp.get_header("Content-Length"), Some("13"));
+        assert!(resp.body.is_empty());
     }
 }

@@ -1,0 +1,6 @@
+{
+    "site": "hi",
+    "protocol": "SONION/1.0",
+    "port": 6767,
+    "alpn": "sonion/1"
+}

@@ -1,0 +1,21 @@
+body {
+    background: #fff;
+    color: #000;
+    max-width: 40rem;
+    margin: 4rem auto;
+    padding: 0 1rem;
+}
+
+h1 {
+    color: aqua;
+}
+
+button {
+    cursor: pointer;
+    padding: 0.5rem 1rem;
+    border: none;
+}
+
+pre {
+    color: #5a489b
+}

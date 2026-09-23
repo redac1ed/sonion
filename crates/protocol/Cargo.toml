@@ -5,3 +5,10 @@ edition = "2021"
 
 [dependencies]
 thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
+
+[dev-dependencies]
+rcgen.workspace = true

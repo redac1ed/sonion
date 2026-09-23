@@ -12,3 +12,10 @@ thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 rcgen = "0.13"      
 tracing = "0.1"
+webpki-roots = "0.26"
+tracing-subscriber = {version = "0.3", features = ["env-filter"]}
+sonion-protocol = {path = "crates/protocol"}
+sonion-server = {path = "crates/server"}
+mime_guess = "2"
+anyhow = "1"
+tempfile = "3"
