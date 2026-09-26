@@ -26,6 +26,14 @@ impl Request {
         }
     }
     pub fn header(mut self, name: &str, value: &str) -> Self {
+        assert!(
+            !name.bytes().any(|b| b == b'\r' || b == b'\n' || b == b':'),
+            "header name must not contain CR, LF or ':'"
+        );
+        assert!(
+            !value.bytes().any(|b| b == b'\r' || b == b'\n'),
+            "header value must not contain CR or LF"
+        );
         self.headers.push((name.into(), value.into()));
         self
     }

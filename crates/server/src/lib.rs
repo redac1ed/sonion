@@ -136,6 +136,12 @@ async fn build_response(root: &Path, request: &Request) -> Response {
     } else {
         path
     };
+    match tokio::fs::metadata(&path).await {
+        Ok(md) if md.is_file() && md.len() > limits::MAX_BODY as u64 => {
+            return simple(Status::PayloadTooLarge, b"payload too large");
+        }
+        _ => {}
+    }
     match tokio::fs::read(&path).await {
         Ok(body) => {
             let mime = mime_guess::from_path(&path)
@@ -175,7 +181,7 @@ fn resolve_path(root: &Path, request_path: &str) -> Option<PathBuf> {
         match seg {
             "" | "." => {}
             ".." => return None,
-            s if s.contains('\\') || s.contains(':') => return None,
+            s if s.contains(':') || s.contains('\0') => return None,
             s => out.push(s),
         }
     }

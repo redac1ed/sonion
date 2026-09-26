@@ -69,6 +69,15 @@ impl Response {
     }
     pub fn set_header(&mut self, name: impl Into<String>, value: impl Into<String>) {
         let name = name.into();
+        let value = value.into();
+        assert!(
+            !name.bytes().any(|b| b == b'\r' || b == b'\n' || b == b':'),
+            "header name must not contain CR, LF or colon"
+        );
+        assert!(
+            !value.bytes().any(|b| b == b'\r' || b == b'\n'),
+            "header value must not contain CR or LF"
+        );
         self.headers.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
         self.headers.push((name, value.into()));
     }
@@ -226,7 +235,7 @@ fn parse_chunked_body(bytes: &[u8]) -> Result<Vec<u8>, ProtocolError> {
             }
             return Ok(body);
         }
-        if body.len() + size > limits::MAX_BODY {
+        if size.checked_add(body.len()).is_none_or(|t| t > limits::MAX_BODY) {
             return Err(ProtocolError::BodyTooLarge {
                 max: limits::MAX_BODY,
             });

@@ -147,12 +147,14 @@ fn chunked_complete(mut rest: &[u8]) -> Result<bool, ProtocolError> {
         if size == 0 {
             return Ok(rest.len() >= 2);
         }
-        total += size;
-        if total > limits::MAX_BODY {
-            return Err(ProtocolError::BodyTooLarge {
-                max: limits::MAX_BODY,
-            });
-        }
+        total += match total.checked_add(size) {
+            Some(t)if t <= limits::MAX_BODY => t,
+            _ => {
+                return Err(ProtocolError::BodyTooLarge {
+                    max: limits::MAX_BODY,
+                });
+            }
+        };
         if rest.len() < size + 2 {
             return Ok(false);
         }
