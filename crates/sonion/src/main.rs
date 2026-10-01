@@ -97,6 +97,16 @@ enum Cmd {
         #[arg(long, default_value_t = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT)))]
         addr: SocketAddr,
     },
+    Registry {
+        #[arg(long, default_value = "./registry-data")]
+        data_dir: PathBuf,
+        #[arg(long)]
+        cert: PathBuf,
+        #[arg(long)]
+        key: PathBuf,
+        #[arg(long, default_value_t = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT)))]
+        addr: SocketAddr
+    }
 }
 
 #[tokio::main]
@@ -126,6 +136,12 @@ async fn main() -> Result<()> {
             key,
             addr,
         } => cmd_dev(root, cert, key, addr).await,
+        Cmd::Registry {
+            data_dir,
+            cert,
+            key,
+            addr,
+        } => cmd_registry(data_dir, cert, key, addr).await
     }
 }
 
@@ -329,4 +345,19 @@ fn which_bun() -> Option<PathBuf> {
         .ok()
         .filter(|s| s.success())
         .map(|_| PathBuf::from("bun"))
+}
+
+async fn cmd_registry(
+    data_dir: PathBuf, 
+    cert: PathBuf, 
+    key: PathBuf, 
+    addr: SocketAddr
+) -> Result<()> {
+    let (certs, key) = load_pem_identity(&cert, &key)?;
+    let registry = registry::Registry::open(&data_dir)?;
+    info!(key = %registry.verifying_key_b64(), "registry signing key");
+    let server = registry::RegistryServer::bind(addr, registry, certs, key).await?;
+    info!(addr = %server.local_addr()?, "registry up");
+    server.run().await?;
+    Ok(())
 }

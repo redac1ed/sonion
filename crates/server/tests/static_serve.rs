@@ -76,7 +76,6 @@ async fn serves_html_css_js_json() {
     assert_eq!(r.get_header("Content-Type"), Some("application/json"));
     assert_eq!(r.body, br#"{"ok":true}"#);
 }
-
 #[tokio::test]
 async fn serves_binary_exact_bytes() {
     let site = spawn_site().await;
@@ -86,7 +85,6 @@ async fn serves_binary_exact_bytes() {
     let expected: Vec<u8> = (0..=255u8).cycle().take(1024).collect();
     assert_eq!(r.body, expected);
 }
-
 #[tokio::test]
 async fn large_file_uses_chunked() {
     let site = spawn_site().await;
@@ -96,7 +94,6 @@ async fn large_file_uses_chunked() {
     let expected: Vec<u8> = (0..300 * 1024u32).map(|i| (i % 251) as u8).collect();
     assert_eq!(r.body, expected);
 }
-
 #[tokio::test]
 async fn head_matches_get_without_body() {
     let site = spawn_site().await;
@@ -114,14 +111,12 @@ async fn head_matches_get_without_body() {
         get.get_header("Content-Type")
     );
 }
-
 #[tokio::test]
 async fn mission_file_is_404() {
     let site = spawn_site().await;
     let r = fetch(&site.url("/nope.txt"), true).await.unwrap();
     assert_eq!(r.status, Status::NotFound);
 }
-
 #[tokio::test]
 async fn spa_fallback_serves_index() {
     let site = spawn_site().await;
@@ -129,7 +124,6 @@ async fn spa_fallback_serves_index() {
     assert_eq!(r.status, Status::Ok);
     assert_eq!(r.body, b"<h1>konichiwa</h1>");
 }
-
 #[tokio::test]
 async fn rejects_traversal() {
     let site = spawn_site().await;
@@ -147,7 +141,6 @@ async fn rejects_traversal() {
         assert_eq!(r.status, Status::BadRequest, "path: {path}");
     }
 }
-
 #[tokio::test]
 async fn malformed_request_gets_400() {
     let site = spawn_site().await;
@@ -167,7 +160,6 @@ async fn malformed_request_gets_400() {
     let text = String::from_utf8_lossy(&tmp[..n]);
     assert!(text.starts_with("SONION/1.0 400"), "got: {text}");
 }
-
 #[tokio::test]
 async fn rejects_wrong_alpn() {
     let site = spawn_site().await;
@@ -180,7 +172,6 @@ async fn rejects_wrong_alpn() {
     let name = ServerName::try_from("localhost".to_string()).unwrap();
     assert!(connector.connect(name, tcp).await.is_err());
 }
-
 #[tokio::test]
 async fn bind_rejects_missing_root() {
     let (certs, key) = test_certs();

@@ -1,0 +1,6 @@
+POST /v1/accounts SONION/1.0
+Host: registry.son
+Content-Type: application/json
+Content-Length: 27
+
+{"username":"aaa","pw":"a"}

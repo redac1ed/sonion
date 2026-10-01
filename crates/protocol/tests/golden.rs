@@ -125,3 +125,22 @@ fn rejects_headers_too_large() {
     req.push_str("\r\n");
     assert!(Request::parse(req.as_bytes()).is_err());
 }
+#[test]
+fn golden_request_post_parse() {
+    let bytes = load_fixture("request-post.txt");
+    let req = Request::parse(&bytes).expect("should parse");
+    assert_eq!(req.method, "POST");
+    assert_eq!(req.path, "/v1/accounts");
+    assert_eq!(req.get_header("Content-Type"), Some("application/json"));
+    assert_eq!(req.get_header("Content-Length"), Some("27"));
+    assert_eq!(req.body, br#"{"username":"aaa","pw":"a"}"#)
+}
+
+#[test]
+fn golden_request_post_roundtrip() {
+    let bytes = load_fixture("request-post.txt");
+    let req = Request::parse(&bytes).expect("should parse");
+    let serialized = req.serialize();
+    let req2 = Request::parse(&serialized).expect("re-parse should succeed");
+    assert_eq!(req, req2);
+}

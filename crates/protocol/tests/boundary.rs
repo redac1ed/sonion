@@ -7,7 +7,6 @@ fn request_line_at_exact_limit_ok() {
     let wire = format!("{line}\r\n\r\n");
     assert!(Request::parse(wire.as_bytes()).is_ok());
 }
-
 #[test]
 fn request_line_one_over_limit_err() {
     let line = format!("GET /{} SONION/1.0", "a".repeat(limits::MAX_REQUEST_LINE - 15));
@@ -18,7 +17,6 @@ fn request_line_one_over_limit_err() {
         Err(ProtocolError::RequestLineTooLarge { .. })
     ));
 }
-
 #[test]
 fn headers_at_exact_limit_ok() {
     let max = limits::MAX_REQUEST_LINE + limits::MAX_HEADERS;
@@ -28,7 +26,6 @@ fn headers_at_exact_limit_ok() {
     let wire = format!("{line}\r\n{headers}\r\n\r\n");
     assert!(Request::parse(wire.as_bytes()).is_ok());
 }
-
 #[test]
 fn headers_one_over_limit_err() {
     let max = limits::MAX_REQUEST_LINE + limits::MAX_HEADERS;
@@ -41,13 +38,11 @@ fn headers_one_over_limit_err() {
         Err(ProtocolError::HeadersTooLarge { .. })
     ));
 }
-
 #[test]
 fn content_length_zero_ok() {
     let resp = Response::parse(b"SONION/1.0 200 ok\r\nContent-Length: 0\r\n\r\n").unwrap();
     assert!(resp.body.is_empty());
 }
-
 #[test]
 fn content_length_over_max_body_rejected() {
     let wire = format!(
@@ -59,27 +54,23 @@ fn content_length_over_max_body_rejected() {
         Err(ProtocolError::BodyTooLarge { .. })
     ));
 }
-
 #[test]
 fn content_length_non_numeric_rejected() {
     let wire = b"SONION/1.0 200 ok\r\nContent-Length: 0x10\r\n\r\n";
     assert!(Response::parse(wire).is_err());
 }
-
 #[test]
 fn duplicate_content_length_first_one_wins() {
     let wire = b"SONION/1.0 200 ok\r\nContent-Length: 5\r\nContent-Length: 999\r\n\r\nhello";
     let resp = Response::parse(wire).expect("first Content-Length should be used");
     assert_eq!(resp.body, b"hello");
 }
-
 #[test]
 fn transfer_encoding_chunked_wins_over_content_length() {
     let wire = b"SONION/1.0 200 ok\r\nContent-Length: 100\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nkoni\r\n0\r\n\r\n";
     let resp = Response::parse(wire).expect("should parse as chunked");
     assert_eq!(resp.body, b"koni");
 }
-
 #[test]
 fn chunk_size_hex_overflow_is_rejected_not_panic() {
     let wire = b"SONION/1.0 200 ok\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\nffffffffffffffff\r\ny\r\n0\r\n\r\n";
@@ -92,7 +83,6 @@ fn chunk_size_hex_overflow_is_rejected_not_panic() {
         ),
     }
 }
-
 #[test]
 fn chunked_terminal_chunk_requires_crlf() {
     let bad = b"SONION/1.0 200 ok\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nXX";
@@ -101,13 +91,11 @@ fn chunked_terminal_chunk_requires_crlf() {
         "terminal 0-chunk must be followed by CRLF"
     );
 }
-
 #[test]
 fn trailing_bytes_after_terminal_chunk_are_ignored_for_now() {
     let wire = b"SONION/1.0 200 ok\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nGARBAGE";
     assert!(Response::parse(wire).is_ok());
 }
-
 #[test]
 fn set_header_panics_on_crlf_in_value() {
     let result = std::panic::catch_unwind(|| {
@@ -119,7 +107,6 @@ fn set_header_panics_on_crlf_in_value() {
         "set_header must reject CR/LF in values (header injection guard)"
     );
 }
-
 #[test]
 fn request_header_panics_on_crlf_in_value() {
     let result = std::panic::catch_unwind(|| {
@@ -130,7 +117,6 @@ fn request_header_panics_on_crlf_in_value() {
         "Request::header must reject CR/LF in values (header injection guard)"
     );
 }
-
 #[test]
 fn clean_headers_serialize_and_parse_fine() {
     let mut resp = Response::new(Status::Ok, b"hi".to_vec());
@@ -141,35 +127,97 @@ fn clean_headers_serialize_and_parse_fine() {
     let parsed = Request::parse(&req.serialize()).unwrap();
     assert_eq!(parsed.headers[0], ("Host".into(), "hello.son".into()));
 }
-
 #[test]
 fn header_line_without_colon_rejected() {
     let wire = b"GET / SONION/1.0\r\nBadHeader\r\n\r\n";
     assert!(Request::parse(wire).is_err());
 }
-
 #[test]
 fn lowercase_method_rejected() {
     let wire = b"get / SONION/1.0\r\n\r\n";
     assert!(Request::parse(wire).is_err());
 }
-
 #[test]
 fn tab_separated_request_line_currently_accepted() {
     let wire = b"GET\t/\tSONION/1.0\r\n\r\n";
     assert!(Request::parse(wire).is_ok());
 }
-
 #[test]
 fn percent_decoded_null_byte_is_preserved_for_server_to_reject() {
     let decoded = sonion_protocol::decode_path("/%00").unwrap();
     assert!(decoded.contains('\0'));
 }
-
 #[test]
 fn double_encoded_traversal_stays_literal() {
     let decoded = sonion_protocol::decode_path("/%252e%252e/secret").unwrap();
     assert_eq!(decoded, "/%2e%2e/secret");
     let canon = sonion_protocol::canonicalize_path(&decoded).unwrap();
     assert_eq!(canon, "/%2e%2e/secret", "single decode must not become ..");
+}
+#[test]
+fn post_constructor_serializes_with_content_length() {
+    let req = Request::post("/v1/login", b"{\"pw\":\"aaaaaa1111\"}".to_vec());
+    let bytes = req.serialize();
+    let parsed = Request::parse(&bytes).unwrap();
+    assert_eq!(parsed.method, "POST");
+    assert_eq!(parsed.get_header("Content-Length"), Some("19"));
+    assert_eq!(parsed.body, b"{\"pw\":\"aaaaaa1111\"}");
+}
+#[test]
+fn put_constructor_serializes_with_content_length() {
+    let req = Request::put("/v1/domains/kon.son", br#"{"a":"1.1.1.1"}"#.to_vec());
+    let parsed = Request::parse(&req.serialize()).unwrap();
+    assert_eq!(parsed.method, "PUT");
+    assert_eq!(parsed.path, "/v1/domains/kon.son");
+    assert_eq!(parsed.body, br#"{"a":"1.1.1.1"}"#);
+}
+#[test]
+fn serialize_respects_manual_content_length() {
+    let req = Request::post("/x", b"aaa".to_vec()).header("Content-Length", "3");
+    let wire = String::from_utf8(req.serialize()).unwrap();
+    assert_eq!(wire.matches("Content-Length").count(), 1);
+    let parsed = Request::parse(wire.as_bytes()).unwrap();
+    assert_eq!(parsed.body, b"aaa");
+}
+#[test]
+fn get_head_serialize_no_content_length() {
+    let wire = String::from_utf8(Request::get("/").serialize()).unwrap();
+    assert!(!wire.contains("Content-Length"));
+    let wire = String::from_utf8(Request::head("/").serialize()).unwrap();
+    assert!(!wire.contains("Content-Length"));
+}
+#[test]
+fn parse_post_body_at_limit_ok() {
+    let body = vec![b'x'; limits::MAX_BODY];
+    let req = Request::post("/a", body.clone());
+    let parsed = Request::parse(&req.serialize()).unwrap();
+    assert_eq!(parsed.body.len(), limits::MAX_BODY);
+    assert_eq!(parsed.body, body);
+}
+#[test]
+fn parse_rejects_oversized_declared_body() {
+    let wire = format!("POST / SONION/1.0\r\nContent-Length: {} \r\n\r\n", limits::MAX_BODY + 1);
+    assert!(matches!(Request::parse(wire.as_bytes()), Err(ProtocolError::BodyTooLarge {..})));
+}
+#[test]
+fn parse_rejects_short_body() {
+    let wire = b"POST / SONION/1.0\r\nContent-Length: 10\r\n\r\nabc";
+    assert!(matches!(Request::parse(wire), Err(ProtocolError::UnexpectedEof)));
+}
+#[test]
+fn parse_rejects_bad_content_length() {
+    let wire = b"POST / SONION/1.0\r\nContent-Length: abc\r\n\r\nhello";
+    assert!(matches!(Request::parse(wire), Err(ProtocolError::InvalidHeader(_))));
+}
+#[test]
+fn parse_ignores_extra_bytes_past_content_length() {
+    let wire =  b"POST / SONION/1.0\r\nContent-Length: 3\r\n\r\naaaaaa";
+    let req = Request::parse(wire).unwrap();
+    assert_eq!(req.body, b"aaa")
+}
+#[test]
+fn parse_get_with_declared_zero_body() {
+    let wire = b"GET / SONION/1.0\r\nContent-Length: 0\r\n\r\n";
+    let req = Request::parse(wire).unwrap();
+    assert!(req.body.is_empty());
 }

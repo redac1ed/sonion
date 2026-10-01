@@ -1,6 +1,6 @@
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sonion_protocol::head::find_header_end;
-use sonion_protocol::{ALPN, Request, Response, Status, limits};
+use sonion_protocol::{ALPN, ProtocolError, Request, Response, Status, limits};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,6 +14,8 @@ use tracing::{info, warn};
 const HEAD_TIMEOUT: Duration = Duration::from_secs(15);
 const CHUNK_THRESHOLD: usize = 256 * 1024;
 const CHUNK_SIZE: usize = 16 * 1024;
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+const DRAIN_MAX: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
@@ -30,7 +32,6 @@ pub struct Server {
 }
 
 impl Server {
-    // uses tls 1.3
     pub async fn bind(
         addr: SocketAddr,
         root: impl AsRef<Path>,
@@ -76,7 +77,6 @@ async fn handle_conn(
 ) -> anyhow::Result<()> {
     let mut tls = acceptor.accept(tcp).await?;
     match tls.get_ref().1.alpn_protocol() {
-        // enforce alpn
         Some(p) if p == ALPN.as_bytes() => {}
         other => {
             anyhow::bail!(
@@ -85,7 +85,7 @@ async fn handle_conn(
             );
         }
     }
-    let deadline = Instant::now() + HEAD_TIMEOUT; // read req head with limits/deadline
+    let deadline = Instant::now() + HEAD_TIMEOUT;
     let mut buf = Vec::with_capacity(16 * 1024);
     let max_head = limits::MAX_REQUEST_LINE + limits::MAX_HEADERS + 4;
     loop {
@@ -105,15 +105,51 @@ async fn handle_conn(
         };
         buf.extend_from_slice(&tmp[..n]);
     }
-    let request = match Request::parse(&buf) {
-        Ok(r) => r,
-        Err(e) => {
-            warn!(error = %e, "malformed request");
-            write_simple(&mut tls, Status::BadRequest, b"bad request").await?;
-            return Ok(());
+    let head_len = find_header_end(&buf).map(|p| p + 4).unwrap_or(0);
+    let request = loop {
+        match Request::parse(&buf) {
+            Ok(r) => break r,
+            Err(ProtocolError::UnexpectedEof) => {
+                if buf.len() > max_head + limits::MAX_BODY {
+                    write_simple(&mut tls, Status::PayloadTooLarge, b"payload too large")
+                        .await?;
+                    anyhow::bail!("request too large");
+                }
+                let mut tmp = [0u8; 16 * 1024];
+                let n = match timeout_at(deadline, tls.read(&mut tmp)).await {
+                    Ok(Ok(0)) => {
+                        write_simple(&mut tls, Status::BadRequest, b"incomplete request")
+                            .await?;
+                        return Ok(());
+                    }
+                    Ok(Ok(n)) => n,
+                    Ok(Err(e)) => return Err(e.into()),
+                    Err(_) => {
+                        write_simple(&mut tls, Status::BadRequest, b"request timeout").await?;
+                        return Ok(());
+                    }
+                };
+                buf.extend_from_slice(&tmp[..n]);
+            }
+            Err(e) => {
+                warn!(error = %e, "malformed request");
+                write_simple(&mut tls, Status::BadRequest, b"bad request").await?;
+                return Ok(());
+            }
         }
     };
     info!(method = %request.method, path = %request.path, "request");
+    if request.method != "GET" && request.method != "HEAD" {
+        write_simple(&mut tls, Status::MethodNotAllowed, b"method not allowed").await?;
+        let body_remaining = request
+            .get_header("Content-Length")
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(0)
+            .saturating_sub(buf.len() - head_len);
+        drain_body(&mut tls, body_remaining).await;
+        let _ = tls.shutdown().await;
+        return Ok(());
+    }
     let response = build_response(root, &request).await;
     let wire = if request.method == "HEAD" {
         response.serialize_head()
@@ -205,4 +241,18 @@ async fn write_simple<S: AsyncWriteExt + Unpin>(
     stream.write_all(&simple(status, body).serialize()).await?;
     stream.flush().await?;
     Ok(())
+}
+
+async fn drain_body<S: AsyncReadExt + Unpin>(stream: &mut S, mut remaining: usize) {
+    remaining = remaining.min(DRAIN_MAX);
+    let deadline = Instant::now() + DRAIN_TIMEOUT;
+    let mut tmp = [0u8; 16 * 1024];
+    while remaining > 0 {
+        let want = remaining.min(tmp.len());
+        match timeout_at(deadline, stream.read(&mut tmp[..want])).await {
+            Ok(Ok(0)) | Err(_) => break,
+            Ok(Ok(n)) => remaining -= n,
+            Ok(Err(_)) => break,
+        }
+    }
 }

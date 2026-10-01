@@ -19,3 +19,7 @@ sonion-server = {path = "crates/server"}
 mime_guess = "2"
 anyhow = "1"
 tempfile = "3"
+ed25519-dalek = "2"
+sha2 = "0.10"
+rand = "0.8"
+base64 = "0.22"

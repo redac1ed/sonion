@@ -61,11 +61,20 @@ pub async fn send(
             ));
         }
     }
-    tls.write_all(&request.serialize()).await?;
-    tls.flush().await?;
+    let write_err = match tls.write_all(&request.serialize()).await {
+        Ok(()) => tls.flush().await.err(),
+        Err(e) => Some(e),
+    };
     let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
-    let max_head = limits::MAX_STATUS_LINE + limits::MAX_HEADERS;
     let head_deadline = Instant::now() + HEAD_TIMEOUT;
+    if let Some(e) = write_err {
+        let mut tmp = [0u8; 8192];
+        match timeout_at(head_deadline, tls.read(&mut tmp)).await {
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => return Err(ClientError::Io(e)),
+            Ok(Ok(n)) => buf.extend_from_slice(&tmp[..n]),
+        }
+    }
+    let max_head = limits::MAX_STATUS_LINE + limits::MAX_HEADERS;
     let (body_start, framing) = loop {
         if find_header_end(&buf).is_some() {
             let mut parsed = head_framing(&buf)
@@ -132,7 +141,7 @@ fn body_complete(buf: &[u8], body_start: usize, framing: &Framing) -> Result<boo
         Framing::Chunked => chunked_complete(&buf[body_start..]),
     }
 }
-// check to not reparse on every read
+
 fn chunked_complete(mut rest: &[u8]) -> Result<bool, ProtocolError> {
     let mut total = 0usize;
     loop {

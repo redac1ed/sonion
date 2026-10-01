@@ -1,17 +1,19 @@
 use crate::{
-    head::{find_header_end, parse_headers, CRLF, VERSION},
-    limits, ProtocolError,
+    ProtocolError, head::{CRLF, VERSION, find_header_end, parse_headers}, limits,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
-    Ok,                  // 200
-    MovedPermanently,    // 301
-    Found,               // 302
-    BadRequest,          // 400
-    NotFound,            // 404
-    PayloadTooLarge,     // 413
+    Ok, // 200
+    MovedPermanently, // 301
+    Found, // 302
+    BadRequest, // 400
+    NotFound, // 404
+    PayloadTooLarge, // 413
     InternalServerError, // 500
+    MethodNotAllowed, // 405
+    Conflict, // 409
+    Unauthorized // 401
 }
 
 impl Status {
@@ -24,6 +26,9 @@ impl Status {
             Status::NotFound => 404,
             Status::PayloadTooLarge => 413,
             Status::InternalServerError => 500,
+            Status::MethodNotAllowed => 405,
+            Status::Conflict => 409,
+            Status::Unauthorized => 401
         }
     }
     pub fn from_code(code: u16) -> Result<Status, ProtocolError> {
@@ -35,6 +40,9 @@ impl Status {
             404 => Ok(Status::NotFound),
             413 => Ok(Status::PayloadTooLarge),
             500 => Ok(Status::InternalServerError),
+            405 => Ok(Status::MethodNotAllowed),
+            401 => Ok(Status::Unauthorized),
+            409 => Ok(Status::Conflict),
             c => Err(ProtocolError::InvalidStatus(c)),
         }
     }
@@ -47,6 +55,9 @@ impl Status {
             Status::NotFound => "not found",
             Status::PayloadTooLarge => "payload too large",
             Status::InternalServerError => "internal server error",
+            Status::MethodNotAllowed => "method not allowed",
+            Status::Conflict => "conflict",
+            Status::Unauthorized => "unauthorized"
         }
     }
 }

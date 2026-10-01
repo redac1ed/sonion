@@ -76,7 +76,6 @@ async fn slow_loris_killed_by_head_deadline() {
         }
     }
 }
-
 #[tokio::test]
 async fn client_closing_mid_request_does_not_wedge_server() {
     let (_tmp, port) = spawn_site(&[("index.html", b"hi".to_vec())]).await;
@@ -88,7 +87,6 @@ async fn client_closing_mid_request_does_not_wedge_server() {
     let r = fetch(&url(port, "/"), true).await.unwrap();
     assert_eq!(r.status, Status::Ok);
 }
-
 #[tokio::test]
 async fn hundred_concurrent_fetches_all_succeed() {
     let body = b"concurrent body".to_vec();
@@ -105,7 +103,6 @@ async fn hundred_concurrent_fetches_all_succeed() {
         assert_eq!(r.body, body);
     }
 }
-
 #[tokio::test]
 async fn file_over_max_body_gets_413_not_silence() {
     let big = vec![0u8; 11 * 1024 * 1024]; // 11 MiB > 10 MiB cap
@@ -123,7 +120,6 @@ async fn file_over_max_body_gets_413_not_silence() {
         ),
     }
 }
-
 #[tokio::test]
 #[ignore = "takes ~60s by design (client body deadline); run explicitly"]
 async fn partial_body_eventually_times_out() {
@@ -159,7 +155,6 @@ async fn partial_body_eventually_times_out() {
         start.elapsed()
     );
 }
-
 #[tokio::test]
 async fn nul_byte_in_path_rejected() {
     let (_tmp, port) = spawn_site(&[("index.html", b"hi".to_vec())]).await;
@@ -170,4 +165,28 @@ async fn nul_byte_in_path_rejected() {
         "NUL in path must not reach the filesystem, got {}",
         r.status.code()
     );
+}
+#[tokio::test]
+async fn static_server_rejects_post_and_put() {
+    let (_tmp, port) = spawn_site(&[("index.html", b"hi".to_vec())]).await;
+    for method in ["POST", "PUT"] {
+        let req = Request::post("/anything", b"{}".to_vec());
+        let req = if method == "PUT" {
+            Request::put("/anything", b"{}".to_vec())
+        } else {
+            req
+        };
+        let r = send(&url(port, "/"), &req, true)
+            .await
+            .unwrap_or_else(|e| panic!("{method} request failed: {e}"));
+        assert_eq!(r.status, Status::MethodNotAllowed, "method: {method}");
+        assert_eq!(r.body, b"method not allowed");
+    }
+}
+#[tokio::test]
+async fn static_server_405_without_reading_large_body() {
+    let (_tmp, port) = spawn_site(&[("index.html", b"hi".to_vec())]).await;
+    let req = Request::post("/upload", vec![b'x'; 1024 * 1024]);
+    let r = send(&url(port, "/"), &req, true).await.unwrap();
+    assert_eq!(r.status, Status::MethodNotAllowed);
 }
