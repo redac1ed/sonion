@@ -4,16 +4,20 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
-    Ok, // 200
-    MovedPermanently, // 301
-    Found, // 302
-    BadRequest, // 400
-    NotFound, // 404
-    PayloadTooLarge, // 413
-    InternalServerError, // 500
-    MethodNotAllowed, // 405
-    Conflict, // 409
-    Unauthorized // 401
+    Ok,
+    MovedPermanently,
+    Found,
+    NotModified,
+    BadRequest,
+    Unauthorized,
+    Forbidden,
+    NotFound,
+    MethodNotAllowed,
+    Conflict,
+    PayloadTooLarge,
+    TooManyRequests,
+    InternalServerError,
+    ServiceUnavailable,
 }
 
 impl Status {
@@ -22,13 +26,17 @@ impl Status {
             Status::Ok => 200,
             Status::MovedPermanently => 301,
             Status::Found => 302,
+            Status::NotModified => 304,
             Status::BadRequest => 400,
+            Status::Unauthorized => 401,
+            Status::Forbidden => 403,
             Status::NotFound => 404,
-            Status::PayloadTooLarge => 413,
-            Status::InternalServerError => 500,
             Status::MethodNotAllowed => 405,
             Status::Conflict => 409,
-            Status::Unauthorized => 401
+            Status::PayloadTooLarge => 413,
+            Status::TooManyRequests => 429,
+            Status::InternalServerError => 500,
+            Status::ServiceUnavailable => 503,
         }
     }
     pub fn from_code(code: u16) -> Result<Status, ProtocolError> {
@@ -36,13 +44,17 @@ impl Status {
             200 => Ok(Status::Ok),
             301 => Ok(Status::MovedPermanently),
             302 => Ok(Status::Found),
+            304 => Ok(Status::NotModified),
             400 => Ok(Status::BadRequest),
-            404 => Ok(Status::NotFound),
-            413 => Ok(Status::PayloadTooLarge),
-            500 => Ok(Status::InternalServerError),
-            405 => Ok(Status::MethodNotAllowed),
             401 => Ok(Status::Unauthorized),
+            403 => Ok(Status::Forbidden),
+            404 => Ok(Status::NotFound),
+            405 => Ok(Status::MethodNotAllowed),
             409 => Ok(Status::Conflict),
+            413 => Ok(Status::PayloadTooLarge),
+            429 => Ok(Status::TooManyRequests),
+            500 => Ok(Status::InternalServerError),
+            503 => Ok(Status::ServiceUnavailable),
             c => Err(ProtocolError::InvalidStatus(c)),
         }
     }
@@ -51,14 +63,30 @@ impl Status {
             Status::Ok => "ok",
             Status::MovedPermanently => "moved permanently",
             Status::Found => "found",
+            Status::NotModified => "not modified",
             Status::BadRequest => "bad request",
+            Status::Unauthorized => "unauthorized",
+            Status::Forbidden => "forbidden",
             Status::NotFound => "not found",
-            Status::PayloadTooLarge => "payload too large",
-            Status::InternalServerError => "internal server error",
             Status::MethodNotAllowed => "method not allowed",
             Status::Conflict => "conflict",
-            Status::Unauthorized => "unauthorized"
+            Status::PayloadTooLarge => "payload too large",
+            Status::TooManyRequests => "too many requests",
+            Status::InternalServerError => "internal server error",
+            Status::ServiceUnavailable => "service unavailable",
         }
+    }
+    pub fn is_success(self) -> bool {
+        (200..300).contains(&self.code())
+    }
+    pub fn is_redirect(self) -> bool {
+        matches!(self, Status::MovedPermanently | Status::Found)
+    }
+    pub fn is_client_error(self) -> bool {
+        (400..500).contains(&self.code())
+    }
+    pub fn is_server_error(self) -> bool {
+        (500..600).contains(&self.code())
     }
 }
 

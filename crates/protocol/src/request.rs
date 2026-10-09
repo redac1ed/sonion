@@ -44,6 +44,14 @@ impl Request {
             body: body.into()
         }
     }
+    pub fn delete(path: &str) -> Self {
+        Self {
+            method: "DELETE".into(),
+            path: path.into(),
+            headers: Vec::new(),
+            body: Vec::new()
+        }
+    }
     pub fn header(mut self, name: &str, value: &str) -> Self {
         assert!(
             !name.bytes().any(|b| b == b'\r' || b == b'\n' || b == b':'),
@@ -104,7 +112,7 @@ impl Request {
             )));
         }
         match method {
-            "GET" | "HEAD" | "POST" | "PUT" => {}
+            "GET" | "HEAD" | "POST" | "PUT" | "DELETE" => {}
             other => return Err(ProtocolError::MalformedLine(format!("bad method: {other}"))),
         }
         if !path.starts_with('/') {

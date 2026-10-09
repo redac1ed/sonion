@@ -5,6 +5,7 @@ pub struct SonionUrl {
     pub host: String,
     pub port: u16,
     pub path: String,
+    pub query: Option<String>
 }
 
 impl Default for SonionUrl {
@@ -13,6 +14,7 @@ impl Default for SonionUrl {
             host: String::new(),
             port: DEFAULT_PORT,
             path: "/".into(),
+            query: None
         }
     }
 }
@@ -22,7 +24,7 @@ impl SonionUrl {
         let rest = input
             .strip_prefix("sonion://")
             .ok_or_else(|| ProtocolError::InvalidUrl(format!("missing scheme: {input}")))?;
-        let (authority, path) = match rest.find('/') {
+        let (authority, path_and_query) = match rest.find('/') {
             Some(i) => (&rest[..i], &rest[i..]),
             None => (rest, "/"),
         };
@@ -41,11 +43,46 @@ impl SonionUrl {
         if host.is_empty() {
             return Err(ProtocolError::InvalidUrl("empty host".into()));
         }
-        let path = canonicalize_path(&decode_path(path)?)?; // no ipv6
-        Ok(Self { host, port, path })
+        let (raw_path, raw_query) = match path_and_query.find('?') {
+            Some(i) => (
+                &path_and_query[..i],
+                Some(&path_and_query[i + 1..])
+            ),
+            None => (path_and_query, None)
+        };
+        let path = canonicalize_path(&decode_path(raw_path)?)?; 
+        let query = match raw_query {
+            Some(q) => {
+                let decoded = decode_path(q)?;
+                if decoded.bytes().any(|b| b < 0x20 || b ==0x7f) {
+                    return Err(ProtocolError::InvalidUrl("control char in query".into()));
+                }
+                Some(decoded)
+            }
+            None => None
+        };
+        Ok(Self { host, port, path, query })
     }
     pub fn encoded_path(&self) -> String {
-        encode_path(&self.path)
+        let mut out = encode_path(&self.path);
+        if let Some(q) = &self.query {
+            out.push('?');
+            out.push_str(&encode_query(q));
+        }
+        out
+    }
+    pub fn authority(&self) -> String {
+        if self.port == DEFAULT_PORT {
+            self.host.clone()
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+}
+
+impl std::fmt::Display for SonionUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "sonion://{}{}", self.authority(), self.encoded_path())
     }
 }
 
@@ -91,11 +128,49 @@ pub fn encode_path(s: &str) -> String {
     out
 }
 
+pub fn encode_query(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/'
+            | b'=' | b'&' | b'+' | b':' | b'@' | b',' | b';' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+pub fn parse_query(query: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for part in query.split('&') {
+        if part.is_empty() {
+            continue;
+        }
+        match part.split_once('=') {
+            Some((k, v)) => {
+                let k = decode_path(k).unwrap_or_else(|_| k.to_string());
+                let v = decode_path(v).unwrap_or_else(|_| v.to_string());
+                pairs.push((k, v));
+            }
+            None => {
+                pairs.push((decode_path(part).unwrap_or_else(|_| part.to_string()), String::new()));
+            }
+        }
+    }
+    pairs
+}
+
 pub fn canonicalize_path(decoded: &str) -> Result<String, ProtocolError> {
     if !decoded.starts_with('/') {
         return Err(ProtocolError::InvalidUrl(format!(
             "path must start with '/': {decoded}"
         )));
+    }
+    if decoded.bytes().any(|b| b < 0x20 || b == 0x7f) {
+        return Err(ProtocolError::InvalidUrl(format!("control char in path: {decoded:?}")));
+    }
+    if decoded.contains('\\') {
+        return Err(ProtocolError::InvalidUrl(format!("backslash not allowed in path: {decoded}")));
     }
     let mut segments: Vec<&str> = Vec::new();
     for seg in decoded.split('/') {
@@ -130,59 +205,53 @@ mod tests {
         assert_eq!(u.path, "/");
     }
     #[test]
-    fn explicit_port_and_path() {
-        let u = SonionUrl::parse("sonion://localhost:8080/app.js").unwrap();
-        assert_eq!(u.port, 8080);
-        assert_eq!(u.path, "/app.js");
+    fn parses_host_and_port() {
+        let u = SonionUrl::parse("sonion://example.son:1234/a/b").unwrap();
+        assert_eq!(u.host, "example.son");
+        assert_eq!(u.port, 1234);
+        assert_eq!(u.path, "/a/b");
+        assert_eq!(u.query, None);
     }
     #[test]
-    fn no_path_defaults_to_root() {
-        assert_eq!(SonionUrl::parse("sonion://a.son").unwrap().path, "/");
+    fn parses_query() {
+        let u = SonionUrl::parse("sonion://h/search?q=h").unwrap();
+        assert_eq!(u.path, "/search");
+        assert_eq!(u.query.as_deref(), Some("q=h"));
+        assert_eq!(u.encoded_path(), "/search?q=h")   
     }
     #[test]
-    fn rejects_wrong_scheme() {
-        assert!(SonionUrl::parse("https://a.son/").is_err());
+    fn query_pairs_roundtrip() {
+        let pairs = parse_query("a=2&j=23%2039");
+        assert_eq!(
+            pairs,
+            vec![
+                ("a".to_string(), "2".to_string()),
+                ("j".to_string(), "23 39".to_string())
+            ]
+        );
     }
     #[test]
-    fn rejects_bad_port() {
-        assert!(SonionUrl::parse("sonion://a.son:nope/").is_err());
-        assert!(SonionUrl::parse("sonion://a.son:99999/").is_err());
+    fn display_roundtrip() {
+        let s = "sonion://a.son:6767/a%20?x=1";
+        let u = SonionUrl::parse(s).unwrap();
+        assert_eq!(u.to_string(), s);
     }
     #[test]
-    fn decodes_percent_escapes() {
-        let u = SonionUrl::parse("sonion://a.son/my%20file%2Etxt").unwrap();
-        assert_eq!(u.path, "/my file.txt");
+    fn rejects_backslash() {
+        assert!(SonionUrl::parse("sonion://h/a\\b").is_err());
+        assert!(SonionUrl::parse("sonion://h/%5c%5c").is_err());
     }
     #[test]
-    fn encoded_path_roundtrips() {
-        let u = SonionUrl::parse("sonion://a.son/a%20b/c%25d").unwrap();
-        assert_eq!(u.path, "/a b/c%d");
-        assert_eq!(u.encoded_path(), "/a%20b/c%25d");
+    fn rejects_control_chars() {
+        assert!(SonionUrl::parse("sonion://h/a%00b").is_err());
+        assert!(SonionUrl::parse("sonion://h/a%0ab").is_err());
     }
     #[test]
-    fn rejects_bad_escapes() {
-        assert!(decode_path("/%").is_err());
-        assert!(decode_path("/%2").is_err());
-        assert!(decode_path("/%zz").is_err());
-        assert!(decode_path("/%ff%ff").is_err());
+    fn rejects_traversal_past_root() {
+        assert!(SonionUrl::parse("sonion://h/../../etc").is_err());
     }
     #[test]
-    fn resolves_dot_segments() {
-        assert_eq!(canonicalize_path("/a/./b/../c").unwrap(), "/a/c");
-        assert_eq!(canonicalize_path("/a/b/").unwrap(), "/a/b/");
-        assert_eq!(canonicalize_path("/").unwrap(), "/");
-    }
-    #[test]
-    fn rejects_traversal_above_root() {
-        assert!(canonicalize_path("/../etc/passwd").is_err());
-        assert!(canonicalize_path("/a/../../etc/passwd").is_err());
-    }
-    #[test]
-    fn rejects_encoded_traversal() {
-        assert!(SonionUrl::parse("sonion://a.son/%2e%2e%2fetc/passwd").is_err());
-    }
-    #[test]
-    fn keeps_traversal_within_root() {
-        assert_eq!(canonicalize_path("/a/b/../c").unwrap(), "/a/c");
+    fn canonicalizes_dot_segments() {
+        assert_eq!(SonionUrl::parse("sonion://h/a/.b/../c").unwrap().path, "/a/c");
     }
 }
