@@ -61,9 +61,9 @@ async fn stale_if_modified_since_gets_200() {
     let site = spawn(&[("fresh.txt", "new")]).await;
     let req = Request::get("/fresh.txt").header("Host", "localhost").header("If-Modified-Since", "Thu, 01 Jan 1970 00:00:00 GMT");
     let r = send(&site.url("/fresh.txt"), &req, true).await.unwrap();
-    assert_eq!(r.status, Status::NotFound);
-    assert_eq!(r.get_header("Content-Type"), Some("text/html"));
-    assert_eq!(r.body, b"<h1>lost son</h1>");
+    assert_eq!(r.status, Status::Ok);
+    assert_eq!(r.get_header("Content-Type"), Some("text/plain"));
+    assert_eq!(r.body, b"new");
 }
 #[tokio::test]
 async fn keepalive_two_requests_one_connection() {
@@ -71,7 +71,7 @@ async fn keepalive_two_requests_one_connection() {
     let client = Client::new(true);
     let r = client.send(&site.url("/a.txt"), &Request::get("/a.txt").header("Host", "localhost")).await.unwrap();
     assert_eq!(r.body, b"aaa");
-    let r = client.send(&site.url("/b.txt"), &Request::get("b.txt").header("Host", "localhost")).await.unwrap();
+    let r = client.send(&site.url("/b.txt"), &Request::get("/b.txt").header("Host", "localhost")).await.unwrap();
     assert_eq!(r.body, b"bbb");
     assert!(client.idle_connection_count().await >= 1);
     client.close_all().await;

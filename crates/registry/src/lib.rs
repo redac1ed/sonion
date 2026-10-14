@@ -595,3 +595,6 @@ async fn handle(
         }
     }
 }
+
+pub mod client;
+pub use client::{RegistryClient, ResolveError, SonionResolver};

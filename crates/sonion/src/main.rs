@@ -6,6 +6,7 @@ use sonion_server::Server;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tracing::{info, warn};
+use registry::{client::{RegistryClient, SonionResolver}};
 
 const PACKAGE_JSON: &str = r#"{
     "name": "{name}",
@@ -61,30 +62,33 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     Cert {
-        #[arg(long, default_value = "localhost")] // hostname of cert
+        #[arg(long, default_value = "localhost")]
         host: Vec<String>,
-        #[arg(long, default_value = "./certs")] // output dir
+        #[arg(long, default_value = "./certs")] 
         out: PathBuf,
     },
     Serve {
         #[arg(long)]
         root: PathBuf,
-        #[arg(long)] // pem cert key
+        #[arg(long)] 
         cert: PathBuf,
-        #[arg(long)] // pem priv key
+        #[arg(long)] 
         key: PathBuf,
         #[arg(long, default_value_t = SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)))]
         addr: SocketAddr,
     },
     Fetch {
         url: String,
-        #[arg(long)] // skip cert in dev
+        #[arg(long)] 
         insecure_dev: bool,
         #[arg(long)]
         head: bool,
+        #[arg(long)]
+        registry: Option<String>,
+        #[arg(long)]
+        pin_key: Option<String>
     },
     New {
-        // make new proj
         name: String,
     },
     Dev {
@@ -106,6 +110,73 @@ enum Cmd {
         key: PathBuf,
         #[arg(long, default_value_t = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT)))]
         addr: SocketAddr
+    },
+    Register {
+        #[arg(long)]
+        registry: String,
+        #[arg(long)]
+        username: String, 
+        #[arg(long)]
+        password: String,
+        #[arg(long)]
+        insecure_dev: bool
+    },
+    Login {
+        #[arg(long)]
+        registry: String,
+        #[arg(long)]
+        username: String,
+        #[arg(long)]
+        password: String,
+        #[arg(long)]
+        insecure_dev: bool
+    },
+    Logout {
+        #[arg(long)]
+        registry: String, 
+        #[arg(long)]
+        api_key: String,
+        #[arg(long)]
+        insecure_dev: bool
+    },
+    Resolve {
+        name: String,
+        #[arg(long)]
+        registry: String,
+        #[arg(long)]
+        pin_key: Option<String>,
+        #[arg(long)]
+        insecure_dev: bool
+    },
+    Domains {
+        #[arg(long)]
+        registry: String,
+        #[arg(long)]
+        api_key: String,
+        #[arg(long)]
+        insecure_dev: bool
+    },
+    PutDomain {
+        name: String,
+        #[arg(long)]
+        registry: String,
+        #[arg(long)]
+        api_key: String,
+        #[arg(long, value_delimiter = ',')]
+        endpoints: Vec<String>,
+        #[arg(long)]
+        ttl: Option<u64>,
+        #[arg(long)]
+        insecure_dev: bool
+    },
+    DeleteDomain {
+        name: String,
+        #[arg(long)]
+        registry: String,
+        #[arg(long)]
+        api_key: String,
+        #[arg(long)]
+        insecure_dev: bool
     }
 }
 
@@ -118,30 +189,18 @@ async fn main() -> Result<()> {
         .init();
     match Cli::parse().cmd {
         Cmd::Cert { host, out } => cmd_cert(host, out),
-        Cmd::Serve {
-            root,
-            cert,
-            key,
-            addr,
-        } => cmd_serve(root, cert, key, addr).await,
-        Cmd::Fetch {
-            url,
-            insecure_dev,
-            head,
-        } => cmd_fetch(&url, insecure_dev, head).await,
+        Cmd::Serve {root, cert, key, addr} => cmd_serve(root, cert, key, addr).await,
+        Cmd::Fetch {url, insecure_dev, head, registry, pin_key} => cmd_fetch(&url, insecure_dev, head, registry, pin_key).await,
         Cmd::New { name } => cmd_new(&name),
-        Cmd::Dev {
-            root,
-            cert,
-            key,
-            addr,
-        } => cmd_dev(root, cert, key, addr).await,
-        Cmd::Registry {
-            data_dir,
-            cert,
-            key,
-            addr,
-        } => cmd_registry(data_dir, cert, key, addr).await
+        Cmd::Dev {root, cert, key, addr} => cmd_dev(root, cert, key, addr).await,
+        Cmd::Registry {data_dir, cert, key, addr} => cmd_registry(data_dir, cert, key, addr).await,
+        Cmd::Register {registry, username, password, insecure_dev} => cmd_register(&registry, &username, &password, insecure_dev).await,
+        Cmd::Login {registry, username, password, insecure_dev} => cmd_login(&registry, &username, &password, insecure_dev).await,
+        Cmd::Logout {registry, api_key, insecure_dev} => cmd_logout(&registry, &api_key, insecure_dev).await,
+        Cmd::Resolve {name, registry, pin_key, insecure_dev} => cmd_resolve(&name, &registry, pin_key, insecure_dev).await,
+        Cmd::Domains {registry, api_key, insecure_dev} => cmd_domains(&registry, &api_key, insecure_dev).await,
+        Cmd::PutDomain {name, registry, api_key, endpoints, ttl, insecure_dev} => cmd_put_domain(&name, &registry, &api_key, endpoints, ttl, insecure_dev).await,
+        Cmd::DeleteDomain {name, registry, api_key, insecure_dev} => cmd_delete_domain(&name, &registry, &api_key, insecure_dev).await
     }
 }
 
@@ -168,36 +227,53 @@ async fn cmd_serve(root: PathBuf, cert: PathBuf, key: PathBuf, addr: SocketAddr)
     Ok(())
 }
 
-async fn cmd_fetch(url: &str, insecure_dev: bool, head: bool) -> Result<()> {
-    let url = SonionUrl::parse(url).context("invalid URL")?;
+async fn cmd_fetch(url: &str, insecure_dev: bool, head: bool, registry: Option<String>, pin_key: Option<String>) -> Result<()> {
+    let parsed = SonionUrl::parse(url).context("invalid URL")?;
+    let looks_like_domain = parsed.host.bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && parsed.host.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric())
+        && parsed.host.parse::<std::net::IpAddr>().is_err()
+        && parsed.host != "localhost"
+        && !parsed.host.contains('.');
+    if looks_like_domain {
+        let registry = registry.context("domain names need a registry: pass --registry sonion://host:port")?;
+        let reg_url = SonionUrl::parse(&registry).context("invalid --registry URL")?;
+        let resolver = SonionResolver::new(reg_url, insecure_dev, pin_key);
+        let rec = resolver.resolve(&parsed.host).await.with_context(|| format!("could not resolve {}", parsed.host))?;
+        eprintln!("resolved {} -> {:?}", parsed.host, rec.endpoints);
+        let resp = resolver.fetch(&parsed.host, &parsed.encoded_path(), insecure_dev).await.context("fetch via resolved endpoint failed")?;
+        print_response(&resp, head);
+        return Ok(());
+    }
     let resp = if head {
-        let req = sonion_protocol::Request::head(&url.encoded_path()).header("Host", &url.host);
-        sonion_protocol::send(&url, &req, insecure_dev).await?
+        let req = sonion_protocol::Request::head(&parsed.encoded_path()).header("Host", &parsed.host);
+        sonion_protocol::send(&parsed, &req, insecure_dev).await?
     } else {
-        fetch(&url, insecure_dev).await?
+        fetch(&parsed, insecure_dev).await?
     };
+    print_response(&resp, head);
+    Ok(())
+}
+
+fn print_response(resp: &sonion_protocol::Response, head_only: bool) {
     eprintln!("{} {}", resp.status.code(), resp.status.reason());
     for (name, value) in &resp.headers {
         eprintln!("{name}: {value}");
     }
     eprintln!();
-    std::io::Write::write_all(&mut std::io::stdout(), &resp.body)?;
-    Ok(())
+    if !head_only {
+        use std::io::Write;
+        let _ = std::io::stdout().write_all(&resp.body);
+    }
 }
 
 fn load_pem_identity(
     cert_path: &PathBuf,
     key_path: &PathBuf,
 ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
-    let cert_pem = std::fs::read_to_string(cert_path)
-        .with_context(|| format!("reading {}", cert_path.display()))?;
-    let key_pem = std::fs::read_to_string(key_path)
-        .with_context(|| format!("reading {}", key_path.display()))?;
-    let certs: Vec<CertificateDer<'static>> = cert_pem
-        .lines()
-        .collect::<Vec<_>>()
-        .as_slice()
-        .join("\n")
+    let cert_pem = std::fs::read_to_string(cert_path).with_context(|| format!("reading {}", cert_path.display()))?;
+    let key_pem = std::fs::read_to_string(key_path).with_context(|| format!("reading {}", key_path.display()))?;
+    let certs: Vec<CertificateDer<'static>> = cert_pem.lines().collect::<Vec<_>>().as_slice().join("\n")
         .split("-----END CERTIFICATE-----")
         .filter(|block| block.contains("-----BEGIN CERTIFICATE-----"))
         .map(|block| {
@@ -207,17 +283,14 @@ fn load_pem_identity(
                 .collect();
             let der = base64_decode(&b64).expect("bad cert base64");
             CertificateDer::from(der)
-        })
-        .collect();
+        }).collect();
     anyhow::ensure!(
         !certs.is_empty(),
         "no certificates in {}",
         cert_path.display()
     );
-    let b64: String = key_pem
-        .lines()
-        .filter(|l| !l.starts_with("-----") && !l.trim().is_empty())
-        .collect();
+    let b64: String = key_pem.lines()
+        .filter(|l| !l.starts_with("-----") && !l.trim().is_empty()).collect();
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
         base64_decode(&b64).expect("bad key base64"),
     ));
@@ -255,10 +328,7 @@ fn cmd_new(name: &str) -> Result<()> {
     let dir = PathBuf::from(name);
     anyhow::ensure!(!dir.exists(), "{} already exists", dir.display());
     std::fs::create_dir_all(dir.join("src"))?;
-    std::fs::write(
-        dir.join("package.json"),
-        PACKAGE_JSON.replace("{name}", name),
-    )?;
+    std::fs::write(dir.join("package.json"), PACKAGE_JSON.replace("{name}", name))?;
     std::fs::write(dir.join("index.html"), INDEX_HTML.replace("{name}", name))?;
     std::fs::write(dir.join("src/main.jsx"), MAIN_JSX)?;
     std::fs::write(dir.join("src/App.jsx"), APP_JSX)?;
@@ -270,49 +340,28 @@ fn cmd_new(name: &str) -> Result<()> {
 
 async fn cmd_dev(root: PathBuf, cert: PathBuf, key: PathBuf, addr: SocketAddr) -> Result<()> {
     let root = root.canonicalize().context("bad --root")?;
-    let entry = ["src/main.tsx", "src/main.jsx", "src/main.ts", "src/main.js"]
-        .iter()
-        .map(|p| root.join(p))
-        .find(|p| p.exists());
+    let entry = ["src/main.tsx", "src/main.jsx", "src/main.ts", "src/main.js"].iter()
+        .map(|p| root.join(p)).find(|p| p.exists());
     let mut children: Vec<tokio::process::Child> = Vec::new();
     match (which_bun(), entry) {
         (Some(bun), Some(entry)) => {
             if root.join("package.json").exists() && !root.join("node_modules").exists() {
-                // dependencies if proj never init
                 info!("running bun install");
-                let status = tokio::process::Command::new(&bun)
-                    .arg("install")
-                    .current_dir(&root)
-                    .status()
-                    .await
+                let status = tokio::process::Command::new(&bun).arg("install").current_dir(&root).status().await
                     .context("failed to spawn bun install")?;
                 anyhow::ensure!(status.success(), "bun install failed");
             }
             let rel_entry = entry.strip_prefix(&root).unwrap().to_path_buf();
-            let child = tokio::process::Command::new(&bun)
-                .arg("build")
-                .arg(&rel_entry)
+            let child = tokio::process::Command::new(&bun).arg("build").arg(&rel_entry)
                 .args(["--outdir", "dist", "--watch"])
-                .current_dir(&root)
-                .kill_on_drop(true)
-                .spawn()
+                .current_dir(&root).kill_on_drop(true).spawn()
                 .context("failed to spawn bun build --watch")?;
             children.push(child);
             info!(entry = %rel_entry.display(), "bun build --watch running");
             if root.join("src/input.css").exists() {
                 match tokio::process::Command::new(&bun)
-                    .args([
-                        "x",
-                        "@tailwindcss/cli",
-                        "-i",
-                        "src/input.css",
-                        "-o",
-                        "dist/style.css",
-                        "--watch",
-                    ])
-                    .current_dir(&root)
-                    .kill_on_drop(true)
-                    .spawn()
+                    .args(["x", "@tailwindcss/cli", "-i", "src/input.css", "-o", "dist/style.css", "--watch",])
+                    .current_dir(&root).kill_on_drop(true).spawn()
                 {
                     Ok(c) => {
                         children.push(c);
@@ -336,28 +385,82 @@ async fn cmd_dev(root: PathBuf, cert: PathBuf, key: PathBuf, addr: SocketAddr) -
 }
 
 fn which_bun() -> Option<PathBuf> {
-    // use bun cuz npm bad
-    std::process::Command::new("bun")
-        .arg("--version")
+    std::process::Command::new("bun").arg("--version")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .ok()
-        .filter(|s| s.success())
-        .map(|_| PathBuf::from("bun"))
+        .stderr(std::process::Stdio::null()).status().ok()
+        .filter(|s| s.success()).map(|_| PathBuf::from("bun"))
 }
 
-async fn cmd_registry(
-    data_dir: PathBuf, 
-    cert: PathBuf, 
-    key: PathBuf, 
-    addr: SocketAddr
-) -> Result<()> {
+async fn cmd_registry(data_dir: PathBuf, cert: PathBuf, key: PathBuf, addr: SocketAddr) -> Result<()> {
     let (certs, key) = load_pem_identity(&cert, &key)?;
     let registry = registry::Registry::open(&data_dir)?;
     info!(key = %registry.verifying_key_b64(), "registry signing key");
     let server = registry::RegistryServer::bind(addr, registry, certs, key).await?;
     info!(addr = %server.local_addr()?, "registry up");
     server.run().await?;
+    Ok(())
+}
+
+fn registry_client(registry: &str, insecure_dev: bool) -> Result<RegistryClient> {
+    let url = SonionUrl::parse(registry).context("invalid --registry URL")?;
+    Ok(RegistryClient::new(url, insecure_dev))
+}
+
+async fn cmd_register(registry: &str, username: &str, password: &str, insecure_dev: bool) -> Result<()> {
+    let client = registry_client(registry, insecure_dev)?;
+    client.create_account(username, password).await.context("registration failed")?;
+    println!("account {username} created");
+    Ok(())
+}
+
+async fn cmd_login(registry: &str, username: &str, password: &str, insecure_dev: bool) -> Result<()> {
+    let client = registry_client(registry, insecure_dev)?;
+    let key = client.login(username, password).await.context("login failed")?;
+    println!("{key}");
+    Ok(())
+}
+
+async fn cmd_logout(registry: &str, api_key: &str, insecure_dev: bool) -> Result<()> {
+    let client = registry_client(registry, insecure_dev)?;
+    client.logout(api_key).await.context("logout failed")?;
+    println!("api key revoked");
+    Ok(())
+}
+
+async fn cmd_resolve(name: &str, registry: &str, pin_key: Option<String>, insecure_dev: bool) -> Result<()> {
+    let url = SonionUrl::parse(registry).context("invalid --registry URL")?;
+    let resolver = SonionResolver::new(url, insecure_dev, pin_key);
+    let rec = resolver.resolve(name).await.context("resolve failed")?;
+    let json = serde_json::to_string_pretty(&rec)?;
+    println!("{json}");
+    Ok(())
+}
+
+async fn cmd_domains(registry: &str, api_key: &str, insecure_dev: bool) -> Result<()> {
+    let client = registry_client(registry, insecure_dev)?;
+    let domains = client.list_domains(api_key).await.context("list failed")?;
+    if domains.is_empty() {
+        println!("no domains");
+        return Ok(());
+    }
+    for d in &domains {
+        let state = if d.expired {"expired"} else {"active"};
+        println!("{:24} {:8} ttl={:5} expires={} endpoints={}", d.name, state, d.ttl, d.expires_at, d.endpoints.join(","));
+    }
+    Ok(())
+}
+
+async fn cmd_put_domain(name: &str, registry: &str, api_key: &str, endpoints: Vec<String>, ttl: Option<u64>, insecure_dev: bool) -> Result<()> {
+    anyhow::ensure!(!endpoints.is_empty(), "pass atleast one --endpoints host:port");
+    let client = registry_client(registry, insecure_dev)?;
+    let expires = client.put_domain(api_key, name, &endpoints, ttl).await.context("put domain failed")?;
+    println!("{name} registered, expires_at={expires}");
+    Ok(())
+}
+
+async fn cmd_delete_domain(name: &str, registry: &str, api_key: &str, insecure_dev: bool) -> Result<()> {
+    let client = registry_client(registry, insecure_dev)?;
+    client.delete_domain(api_key, name).await.context("delete domain failed")?;
+    println!("{name} deleted");
     Ok(())
 }

@@ -234,7 +234,9 @@ mod tests {
     fn display_roundtrip() {
         let s = "sonion://a.son:6767/a%20?x=1";
         let u = SonionUrl::parse(s).unwrap();
-        assert_eq!(u.to_string(), s);
+        assert_eq!(u.to_string(), "sonion://a.son/a%20?x=1");
+        let s2 = "sonion://a.son:1234/a%20?x=1";
+        assert_eq!(SonionUrl::parse(s2).unwrap().to_string(), s2);
     }
     #[test]
     fn rejects_backslash() {

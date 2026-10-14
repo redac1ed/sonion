@@ -4,3 +4,4 @@ notes.txt
 /examples/my-app/node_modules
 /examples/my-app/dist
 /certs
+/registry-data

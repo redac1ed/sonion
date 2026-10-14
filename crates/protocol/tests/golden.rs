@@ -108,7 +108,7 @@ fn rejects_wrong_version() {
 }
 #[test]
 fn rejects_bad_method() {
-    let bad = b"DELETE / SONION/1.0\r\n\r\n";
+    let bad = b"JFLKDSJFS / SONION/1.0\r\n\r\n";
     assert!(Request::parse(bad).is_err());
 }
 #[test]

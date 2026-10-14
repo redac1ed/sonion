@@ -104,6 +104,6 @@ mod tests {
     #[test]
     fn weekday_math() {
         assert!(format_http_date(86_400 * 3).starts_with("Sun,"));
-        assert!(format_http_date(86_400 * 3).starts_with("Mon,"));
+        assert!(format_http_date(86_400 * 4).starts_with("Mon,"));
     }
 }
