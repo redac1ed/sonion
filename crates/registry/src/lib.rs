@@ -104,7 +104,8 @@ pub struct Registry {
     dir: PathBuf, 
     store: Mutex<Store>,
     signing: SigningKey,
-    login_failures: Mutex<HashMap<IpAddr, LoginPenalty>>
+    login_failures: Mutex<HashMap<IpAddr, LoginPenalty>>,
+    tlds: Vec<String>
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -144,11 +145,13 @@ impl Registry {
             }
             Err(e) => return Err(RegistryError::Io(e))
         };
+        let tlds = Self::load_tlds();
         Ok(Self {
             dir, 
             store: Mutex::new(store),
             signing,
-            login_failures: Mutex::new(HashMap::new())
+            login_failures: Mutex::new(HashMap::new()),
+            tlds
         })
     }
     pub fn verifying_key_b64(&self) -> String {
@@ -174,7 +177,7 @@ impl Registry {
         let Ok(input) = serde_json::from_slice::<In>(body) else {
             return (Status::BadRequest, err_json("bad json"));
         };
-        if !valid_name(&input.username) || input.password.len() < 8 || input.password.len() > MAX_PASSWORD_LEN {
+        if !valid_label(&input.username) || input.password.len() < 8 || input.password.len() > MAX_PASSWORD_LEN {
             return (Status::BadRequest, err_json("invalid username or password length"));
         }
         let mut store = self.store.lock().unwrap();
@@ -280,8 +283,8 @@ impl Registry {
         let Ok(input) = serde_json::from_slice::<In>(&req.body) else {
             return (Status::BadRequest, err_json("bad json"));
         };
-        if !valid_name(name) || input.endpoints.is_empty() {
-            return (Status::BadRequest, err_json("invalid domain or endpoints"));
+        if !valid_name(name, &self.tlds) || input.endpoints.is_empty() {
+            return (Status::BadRequest, err_json("invalid domain, tld or endpoints"));
         }
         if input.endpoints.len() > MAX_ENDPOINTS || input.endpoints.iter().any(|e| !valid_endpoint(e)) {
             return (Status::BadRequest, err_json("invalid endpoints"));
@@ -418,6 +421,7 @@ impl Registry {
                 Status::Ok,
                 format!(r#"{{"key":"{}"}}"#, self.verifying_key_b64()),
             ),
+            ("GET", "/v1/tlds") => self.list_tlds(),
             _ => (Status::NotFound, err_json("unknown endpoint")),
         };
         let mut resp = Response::new(status, body.into_bytes());
@@ -435,17 +439,56 @@ impl Registry {
         }
         removed
     }
+    fn load_tlds() -> Vec<String> {
+        let path = std::env::var("SONION_TLDS").map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tlds.json")
+            });
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("tld config {} missing: {e}", path.display()));
+        let mut tlds: Vec<String> = serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("tld config {} invalid: {e}", path.display()));
+        tlds.retain(|t| valid_tld(t));
+        tlds.sort();
+        tlds.dedup();
+        tlds
+    }
+    pub fn tlds(&self) -> &[String] {
+        &self.tlds
+    }
+    fn list_tlds(&self) -> (Status, String) {
+        (Status::Ok, serde_json::to_string(&serde_json::json!({"tlds": self.tlds})).unwrap())
+    }
 }
 
 fn err_json(msg: &str) -> String {
     format!(r#"{{"error":"{msg}"}}"#) 
 }
 
-fn valid_name(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 63 
+fn valid_label(s: &str) -> bool {
+    !s.is_empty() 
+        && s.len() <= 63
         && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         && s.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric())
         && s.bytes().last().is_some_and(|b| b.is_ascii_alphanumeric())
+}
+
+fn valid_tld(s: &str) -> bool {
+    !s.is_empty() 
+    && s.len() <= 24
+    && s.bytes().all(|b| b.is_ascii_lowercase())
+}
+
+fn valid_name(s: &str, tlds: &[String]) -> bool {
+    if s.is_empty() || s.len() > 253 {
+        return false;
+    }
+    let labels: Vec<&str> = s.split('.').collect();
+    if !labels.iter().all(|l| valid_label(l)) {
+        return false;
+    }
+    match labels.last() {
+        Some(tld) => tlds.iter().any(|t| t == tld),
+        None => false
+    }
 }
 
 fn valid_endpoint(s: &str) -> bool {
@@ -597,4 +640,5 @@ async fn handle(
 }
 
 pub mod client;
+pub mod settings;
 pub use client::{RegistryClient, ResolveError, SonionResolver};

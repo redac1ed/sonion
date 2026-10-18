@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/protocol", "crates/server", "crates/sonion", "crates/registry"]
+members = ["crates/protocol", "crates/server", "crates/sonion", "crates/registry", "browser"]
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -23,3 +23,5 @@ ed25519-dalek = "2"
 sha2 = "0.10"
 rand = "0.8"
 base64 = "0.22"
+wry = "0.53"
+tao = "0.34"

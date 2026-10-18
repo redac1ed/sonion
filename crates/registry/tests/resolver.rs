@@ -39,12 +39,12 @@ async fn setup_domain(port: u16, user: &str, domain: &str, endpoints: &[&str]) -
 #[tokio::test]
 async fn resolver_fetches_and_caches() {
     let (_t, port) = spawn().await;
-    setup_domain(port, "sobble", "cached-site", &["127.0.0.1:6767"]).await;
+    setup_domain(port, "sobble", "cached-site.son", &["127.0.0.1:6767"]).await;
     let resolver = SonionResolver::new(base(port), true, None);
-    let rec1 = resolver.resolve("cached-site").await.unwrap();
-    assert_eq!(rec1.name, "cached-site");
+    let rec1 = resolver.resolve("cached-site.son").await.unwrap();
+    assert_eq!(rec1.name, "cached-site.son");
     assert_eq!(resolver.cache_len(), 1);
-    let rec2 = resolver.resolve("cached-site").await.unwrap();
+    let rec2 = resolver.resolve("cached-site.son").await.unwrap();
     assert_eq!(rec1.signature, rec2.signature);
 }
 #[tokio::test]
@@ -57,38 +57,38 @@ async fn resolver_rejects_unknown_domain() {
 #[tokio::test]
 async fn resolver_pin_rejects_wrong_key() {
     let (_t, port) = spawn().await;
-    setup_domain(port, "sobble", "erm", &["127.0.0.1:6767"]).await;
+    setup_domain(port, "sobble", "erm.son", &["127.0.0.1:6767"]).await;
     let wrong_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string();
     let resolver = SonionResolver::new(base(port), true, Some(wrong_key));
-    let err = resolver.resolve("erm").await.unwrap_err();
+    let err = resolver.resolve("erm.son").await.unwrap_err();
     assert!(err.to_string().contains("verification"));
 }
 #[tokio::test]
 async fn resolver_pin_accepts_correct_key() {
     let (_t, port) = spawn().await;
-    setup_domain(port, "sobble", "trusted", &["127.0.0.1:6767"]).await;
+    setup_domain(port, "sobble", "trusted.son", &["127.0.0.1:6767"]).await;
     let probe = SonionResolver::new(base(port), true, None);
-    let rec = probe.resolve("trusted").await.unwrap();
+    let rec = probe.resolve("trusted.son").await.unwrap();
     let resolver = SonionResolver::new(base(port), true, Some(rec.key.clone()));
-    assert!(resolver.resolve("trusted").await.is_ok());
+    assert!(resolver.resolve("trusted.son").await.is_ok());
 }
 #[tokio::test]
 async fn invalidate_forces_refetch() {
     let (_t, port) = spawn().await;
-    setup_domain(port, "sobble", "watesiggma", &["127.0.0.1:6767"]).await;
+    setup_domain(port, "sobble", "watesiggma.son", &["127.0.0.1:6767"]).await;
     let resolver = SonionResolver::new(base(port), true, None);
-    let rec1 = resolver.resolve("watesiggma").await.unwrap();
-    resolver.invalidate("watesiggma");
+    let rec1 = resolver.resolve("watesiggma.son").await.unwrap();
+    resolver.invalidate("watesiggma.son");
     assert_eq!(resolver.cache_len(), 0);
-    let rec2 = resolver.resolve("watesiggma").await.unwrap();
+    let rec2 = resolver.resolve("watesiggma.son").await.unwrap();
     assert!(rec2.not_before >= rec1.not_before);
 }
 #[tokio::test]
 async fn clear_expired_prunes() {
     let (_t, port) = spawn().await;
-    setup_domain(port, "sobble", "sasda", &["127.0.0.1:6767"]).await;
+    setup_domain(port, "sobble", "sasda.son", &["127.0.0.1:6767"]).await;
     let resolver = SonionResolver::new(base(port), true,  None);
-    resolver.resolve("sasda").await.unwrap();
+    resolver.resolve("sasda.son").await.unwrap();
     assert_eq!(resolver.cache_len(), 1);
     assert_eq!(resolver.clear_expired(), 0);
 }
@@ -111,14 +111,14 @@ async fn registry_client_full_flow() {
     assert!(err.to_string().contains("409") || err.to_string().contains("exists"));
     let key = client.login("sobble", "skibidi123").await.unwrap();
     assert_eq!(key.len(), 64);
-    let expires = client.put_domain(&key, "sumshi", &["127.0.0.1:6767".to_string()], Some(600)).await.unwrap();
+    let expires = client.put_domain(&key, "sumshi.son", &["127.0.0.1:6767".to_string()], Some(600)).await.unwrap();
     assert!(expires > 0);
     let domains = client.list_domains(&key).await.unwrap();
     assert_eq!(domains.len(), 1);
-    assert_eq!(domains[0].name, "sumshi");
+    assert_eq!(domains[0].name, "sumshi.son");
     assert_eq!(domains[0].ttl, 600);
     assert!(!domains[0].expired);
-    client.delete_domain(&key, "sumshi").await.unwrap();
+    client.delete_domain(&key, "sumshi.son").await.unwrap();
     let domains = client.list_domains(&key).await.unwrap();
     assert!(domains.is_empty());
     client.logout(&key).await.unwrap();
@@ -138,9 +138,9 @@ async fn registry_client_login_failures() {
 #[tokio::test]
 async fn verifying_key_endpoint_matches_records() {
     let (_t, port) = spawn().await;
-    setup_domain(port, "sobble", "meowmeow", &["127.0.0.1:6767"]).await;
+    setup_domain(port, "sobble", "meowmeow.son", &["127.0.0.1:6767"]).await;
     let client = RegistryClient::new(base(port), true);
     let key = client.verifying_key().await.unwrap();
-    let rec = client.resolve_record("meowmeow").await.unwrap();
+    let rec = client.resolve_record("meowmeow.son").await.unwrap();
     assert_eq!(key, rec.key);
 }

@@ -50,12 +50,12 @@ async fn register_login_resolve_flow() {
     let key = make_user(port, "alice").await;
     let r = call(
         port,
-        &Request::put("/v1/domains/hello", r#"{"endpoints":["127.0.0.1:6767"]}"#.as_bytes().to_vec())
+        &Request::put("/v1/domains/hello.son", r#"{"endpoints":["127.0.0.1:6767"]}"#.as_bytes().to_vec())
             .header("Authorization", &format!("Bearer {key}")),
     )
     .await;
     assert_eq!(r.status, Status::Ok);
-    let r = call(port, &Request::get("/v1/resolve/hello")).await;
+    let r = call(port, &Request::get("/v1/resolve/hello.son")).await;
     assert_eq!(r.status, Status::Ok);
     let rec: ResolveRecord = serde_json::from_slice(&r.body).unwrap();
     assert_eq!(rec.endpoints, vec!["127.0.0.1:6767".to_string()]);
@@ -64,24 +64,24 @@ async fn register_login_resolve_flow() {
 #[tokio::test]
 async fn unauthenticated_domain_update_rejected() {
     let (_t, port) = spawn().await;
-    let r = call(port, &Request::put("/v1/domains/x", r#"{"endpoints":["a:1"]}"#.as_bytes().to_vec())).await;
+    let r = call(port, &Request::put("/v1/domains/x.son", r#"{"endpoints":["a:1"]}"#.as_bytes().to_vec())).await;
     assert_eq!(r.status, Status::Unauthorized);
 }
 #[tokio::test]
 async fn tampered_record_fails_verification() {
     let (_t, port) = spawn().await;
     let key = make_user(port, "bob").await;
-    call(port, &Request::put("/v1/domains/site", r#"{"endpoints":["good:1"]}"#.as_bytes().to_vec())
+    call(port, &Request::put("/v1/domains/site.son", r#"{"endpoints":["good:1"]}"#.as_bytes().to_vec())
         .header("Authorization", &format!("Bearer {key}"))).await;
-    let r = call(port, &Request::get("/v1/resolve/site")).await;
+    let r = call(port, &Request::get("/v1/resolve/site.son")).await;
     let mut rec: ResolveRecord = serde_json::from_slice(&r.body).unwrap();
     assert!(verify_record(&rec, now_secs()));
     rec.endpoints = vec!["evil:9".to_string()];
     assert!(!verify_record(&rec, now_secs()), "tampered record MUST be rejected");
-    let mut rec2: ResolveRecord = serde_json::from_slice(&call(port, &Request::get("/v1/resolve/site")).await.body).unwrap();
+    let mut rec2: ResolveRecord = serde_json::from_slice(&call(port, &Request::get("/v1/resolve/site.son")).await.body).unwrap();
     rec2.expires_at += 999_999;
     assert!(!verify_record(&rec2, now_secs()));
-    let mut rec3: ResolveRecord = serde_json::from_slice(&call(port, &Request::get("/v1/resolve/site")).await.body).unwrap();
+    let mut rec3: ResolveRecord = serde_json::from_slice(&call(port, &Request::get("/v1/resolve/site.son")).await.body).unwrap();
     rec3.ttl += 1;
     assert!(!verify_record(&rec3, now_secs()));
 }
@@ -105,7 +105,7 @@ async fn multiple_api_keys_both_valid() {
     let k2 = serde_json::from_slice::<serde_json::Value>(&r2.body).unwrap()["api_key"].as_str().unwrap().to_string();
     assert_ne!(k1, k2); 
     for k in [&k1, &k2] {
-        let r = call(port, &Request::put("/v1/domains/multi", r#"{"endpoints":["h:1"]}"#.as_bytes().to_vec())
+        let r = call(port, &Request::put("/v1/domains/multi.son", r#"{"endpoints":["h:1"]}"#.as_bytes().to_vec())
                 .header("Authorization", &format!("Bearer {k}"))).await;
         assert_eq!(r.status, Status::Ok);
     }
@@ -116,7 +116,7 @@ async fn logout_revokes_key() {
     let key = make_user(port, "dave").await;
     let r = call(port, &Request::post("/v1/logout", Vec::new()).header("Authorization", &format!("Bearer {key}"))).await;
     assert_eq!(r.status, Status::Ok);
-    let r = call(port, &Request::put("/v1/domains/gone", r#"{"endpoints":["h:1"]}"#.as_bytes().to_vec())
+    let r = call(port, &Request::put("/v1/domains/gone.son", r#"{"endpoints":["h:1"]}"#.as_bytes().to_vec())
         .header("Authorization", &format!("Bearer {key}"))).await;
     assert_eq!(r.status, Status::Unauthorized);
 }
@@ -124,9 +124,9 @@ async fn logout_revokes_key() {
 async fn get_and_delete_own_domain() {
     let (_t, port) = spawn().await;
     let key = make_user(port, "aaa").await;
-    call(port, &Request::put("/v1/domains/mine", r#"{"endpoints":["h:1"]}"#.as_bytes().to_vec())
+    call(port, &Request::put("/v1/domains/mine.son", r#"{"endpoints":["h:1"]}"#.as_bytes().to_vec())
         .header("Authorization", &format!("Bearer {key}"))).await;
-    let r = call(port, &Request::get("/v1/domains/mine").header("Authorization", &format!("Bearer {key}"))).await;
+    let r = call(port, &Request::get("/v1/domains/mine.son").header("Authorization", &format!("Bearer {key}"))).await;
     assert_eq!(r.status, Status::Ok);
     let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
     assert_eq!(v["owner"], "aaa");
@@ -134,17 +134,17 @@ async fn get_and_delete_own_domain() {
     assert_eq!(r.status, Status::Ok);
     let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
     assert_eq!(v["domains"].as_array().unwrap().len(), 1);
-    let r = call(port, &Request::get("/v1/domains/mine").header("Authorization", "Bearer deadbeef").header("X-Method", "DELETE")).await;
+    let r = call(port, &Request::get("/v1/domains/mine.son").header("Authorization", "Bearer deadbeef").header("X-Method", "DELETE")).await;
     assert_eq!(r.status, Status::Unauthorized);
     let del = Request {
         method: "DELETE".into(),
-        path: "/v1/domains/mine".into(),
+        path: "/v1/domains/mine.son".into(),
         headers: vec![("Authorization".into(), format!("Bearer {key}"))],
         body: Vec::new()
     };
     let r = call(port, &del).await;
     assert_eq!(r.status, Status::Ok);
-    let r = call(port, &Request::get("/v1/resolve/mine")).await;
+    let r = call(port, &Request::get("/v1/resolve/mine.son")).await;
     assert_eq!(r.status, Status::NotFound);
 }
 #[tokio::test]
@@ -152,19 +152,19 @@ async fn foreign_domain_get_and_delete_forbidden() {
     let (_t, port) = spawn().await;
     let owner = make_user(port, "owner").await;
     let theif = make_user(port, "theif").await;
-    call(port, &Request::put("/v1/domains/turf", r#"{"endpoints":["h:1"]}"#.as_bytes().to_vec())
+    call(port, &Request::put("/v1/domains/turf.son", r#"{"endpoints":["h:1"]}"#.as_bytes().to_vec())
         .header("Authorization", &format!("Bearer {owner}"))).await;
-    let r = call(port, &Request::get("/v1/domains/turf").header("Authorization", &format!("Bearer {theif}"))).await;
+    let r = call(port, &Request::get("/v1/domains/turf.son").header("Authorization", &format!("Bearer {theif}"))).await;
     assert_eq!(r.status, Status::Forbidden);
     let del = Request {
         method: "DELETE".into(),
-        path: "/v1/domains/turf".into(),
+        path: "/v1/domains/turf.son".into(),
         headers: vec![("Authorization".into(), format!("Bearer {theif}"))],
         body: Vec::new()
     };
     let r = call(port, &del).await;
     assert_eq!(r.status, Status::Forbidden);
-    let r = call(port, &Request::put("/v1/domains/turf", r#"{"endpoints":["evil:1"]}"#.as_bytes().to_vec())
+    let r = call(port, &Request::put("/v1/domains/turf.son", r#"{"endpoints":["evil:1"]}"#.as_bytes().to_vec())
         .header("Authorization", &format!("Bearer {theif}"))).await;
     assert_eq!(r.status, Status::Conflict);
 }
@@ -172,7 +172,7 @@ async fn foreign_domain_get_and_delete_forbidden() {
 async fn invalid_names_rejected() {
     let (_t, port) = spawn().await;
     let key = make_user(port, "frank").await;
-    for name in ["-lead", "trail-", "UPPER", "under_score", "with.dot", ""] {
+    for name in ["-lead.son", "trail-.son", "UPPER.son", "under_score.son", "with..dot.son", ""] {
         let path = format!("/v1/domains/{name}");
         let r = call(port, &Request::put(&path, r#"{"endpoints":["h:1"]}"#.as_bytes().to_vec())
             .header("Authorization", &format!("Bearer {key}"))).await;
@@ -197,7 +197,7 @@ async fn login_rate_limited_after_failures() {
 #[tokio::test]
 async fn expired_domain_resolves_404() {
     let (_t, port) = spawn().await;
-    let r = call(port, &Request::get("/v1/resolve/ouushii")).await;
+    let r = call(port, &Request::get("/v1/resolve/ouushii.son")).await;
     assert_eq!(r.status, Status::NotFound);
 }
 #[tokio::test]
@@ -225,14 +225,41 @@ async fn persistence_survives_reopen() {
             let r = call(port, &Request::post("/v1/login", body.as_bytes().to_vec())).await;
             serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["api_key"].as_str().unwrap().to_string()
         };
-        call(port, &Request::put("/v1/domains/persist", r#"{"endpoints":["h:1"]}"#.as_bytes().to_vec())
+        call(port, &Request::put("/v1/domains/persist.son", r#"{"endpoints":["h:1"]}"#.as_bytes().to_vec())
             .header("Authorization", &format!("Bearer {key}"))).await;
         drop(key_handle);
         port
     };
     let _ = port;
     let reg = Registry::open(tmp.path()).unwrap();
-    let rec = reg.resolve_record("persist");
+    let rec = reg.resolve_record("persist.son");
     assert!(rec.is_some(), "domain must survive reopen");
     assert!(verify_record(&rec.unwrap(), now_secs()));
+}
+#[tokio::test]
+async fn multi_tld_registration_and_listing() {
+    let (_t, port) = spawn().await;
+    let key = make_user(port, "tldguy").await;
+    let r = call(port, &Request::get("/v1/tlds")).await;
+    assert_eq!(r.status, Status::Ok);
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    let tlds: Vec<&str> = v["tlds"].as_array().unwrap().iter().filter_map(|t| t.as_str()).collect();
+    assert!(tlds.contains(&"son") && tlds.contains(&"rizz"));
+    for fqdn in ["cool.son", "cool.rizz"] {
+        let r = call(port, &Request::put(&format!("/v1/domains/{fqdn}"), r#"{"endpoints":["127.0.0.1:6767"]}"#.as_bytes().to_vec())
+            .header("Authorization", &format!("Bearer {key}"))).await;
+        assert_eq!(r.status, Status::Ok, "register {fqdn}");
+        let r = call(port, &Request::get(&format!("/v1/resolve/{fqdn}"))).await;
+        assert_eq!(r.status, Status::Ok, "resolve {fqdn}");
+    }
+}
+#[tokio::test]
+async fn unlisted_tld_rejected() {
+    let (_t, port) = spawn().await;
+    let key = make_user(port, "squatter").await;
+    for fqdn in ["google.com", "cool.nope", "a.b.c.sonx"] {
+        let r = call(port, &Request::put(&format!("/v1/domains/{fqdn}"), r#"{"endpoints":["h:1"]}"#.as_bytes().to_vec())
+            .header("Authorization", &format!("Bearer {key}"))).await;
+        assert_eq!(r.status, Status::BadRequest, "{fqdn} should be rejected");
+    }
 }

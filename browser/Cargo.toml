@@ -1,0 +1,23 @@
+[package]
+name = "sonion-browser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sonion-protocol.workspace = true
+registry = {path="../crates/registry"}
+wry.workspace = true
+tao.workspace = true 
+tokio.workspace = true 
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+thiserror.workspace = true
+rustls.workspace = true
+sonion-server.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+rcgen.workspace = true

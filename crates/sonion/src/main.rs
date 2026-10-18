@@ -113,7 +113,7 @@ enum Cmd {
     },
     Register {
         #[arg(long)]
-        registry: String,
+        registry: Option<String>,
         #[arg(long)]
         username: String, 
         #[arg(long)]
@@ -123,7 +123,7 @@ enum Cmd {
     },
     Login {
         #[arg(long)]
-        registry: String,
+        registry: Option<String>,
         #[arg(long)]
         username: String,
         #[arg(long)]
@@ -133,7 +133,7 @@ enum Cmd {
     },
     Logout {
         #[arg(long)]
-        registry: String, 
+        registry: Option<String>, 
         #[arg(long)]
         api_key: String,
         #[arg(long)]
@@ -142,7 +142,7 @@ enum Cmd {
     Resolve {
         name: String,
         #[arg(long)]
-        registry: String,
+        registry: Option<String>,
         #[arg(long)]
         pin_key: Option<String>,
         #[arg(long)]
@@ -150,7 +150,7 @@ enum Cmd {
     },
     Domains {
         #[arg(long)]
-        registry: String,
+        registry: Option<String>,
         #[arg(long)]
         api_key: String,
         #[arg(long)]
@@ -159,7 +159,7 @@ enum Cmd {
     PutDomain {
         name: String,
         #[arg(long)]
-        registry: String,
+        registry: Option<String>,
         #[arg(long)]
         api_key: String,
         #[arg(long, value_delimiter = ',')]
@@ -172,7 +172,7 @@ enum Cmd {
     DeleteDomain {
         name: String,
         #[arg(long)]
-        registry: String,
+        registry: Option<String>,
         #[arg(long)]
         api_key: String,
         #[arg(long)]
@@ -194,13 +194,13 @@ async fn main() -> Result<()> {
         Cmd::New { name } => cmd_new(&name),
         Cmd::Dev {root, cert, key, addr} => cmd_dev(root, cert, key, addr).await,
         Cmd::Registry {data_dir, cert, key, addr} => cmd_registry(data_dir, cert, key, addr).await,
-        Cmd::Register {registry, username, password, insecure_dev} => cmd_register(&registry, &username, &password, insecure_dev).await,
-        Cmd::Login {registry, username, password, insecure_dev} => cmd_login(&registry, &username, &password, insecure_dev).await,
-        Cmd::Logout {registry, api_key, insecure_dev} => cmd_logout(&registry, &api_key, insecure_dev).await,
-        Cmd::Resolve {name, registry, pin_key, insecure_dev} => cmd_resolve(&name, &registry, pin_key, insecure_dev).await,
-        Cmd::Domains {registry, api_key, insecure_dev} => cmd_domains(&registry, &api_key, insecure_dev).await,
-        Cmd::PutDomain {name, registry, api_key, endpoints, ttl, insecure_dev} => cmd_put_domain(&name, &registry, &api_key, endpoints, ttl, insecure_dev).await,
-        Cmd::DeleteDomain {name, registry, api_key, insecure_dev} => cmd_delete_domain(&name, &registry, &api_key, insecure_dev).await
+        Cmd::Register {registry, username, password, insecure_dev} => cmd_register(registry, &username, &password, insecure_dev).await,
+        Cmd::Login {registry, username, password, insecure_dev} => cmd_login(registry, &username, &password, insecure_dev).await,
+        Cmd::Logout {registry, api_key, insecure_dev} => cmd_logout(registry, &api_key, insecure_dev).await,
+        Cmd::Resolve {name, registry, pin_key, insecure_dev} => cmd_resolve(&name, registry, pin_key, insecure_dev).await,
+        Cmd::Domains {registry, api_key, insecure_dev} => cmd_domains(registry, &api_key, insecure_dev).await,
+        Cmd::PutDomain {name, registry, api_key, endpoints, ttl, insecure_dev} => cmd_put_domain(&name, registry, &api_key, endpoints, ttl, insecure_dev).await,
+        Cmd::DeleteDomain {name, registry, api_key, insecure_dev} => cmd_delete_domain(&name, registry, &api_key, insecure_dev).await
     }
 }
 
@@ -230,13 +230,12 @@ async fn cmd_serve(root: PathBuf, cert: PathBuf, key: PathBuf, addr: SocketAddr)
 async fn cmd_fetch(url: &str, insecure_dev: bool, head: bool, registry: Option<String>, pin_key: Option<String>) -> Result<()> {
     let parsed = SonionUrl::parse(url).context("invalid URL")?;
     let looks_like_domain = parsed.host.bytes()
-        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
         && parsed.host.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric())
         && parsed.host.parse::<std::net::IpAddr>().is_err()
-        && parsed.host != "localhost"
-        && !parsed.host.contains('.');
+        && parsed.host != "localhost";
     if looks_like_domain {
-        let registry = registry.context("domain names need a registry: pass --registry sonion://host:port")?;
+        let registry = resolve_registry(registry).context("domain names need a registry: pass --registry sonion://host:port")?;
         let reg_url = SonionUrl::parse(&registry).context("invalid --registry URL")?;
         let resolver = SonionResolver::new(reg_url, insecure_dev, pin_key);
         let rec = resolver.resolve(&parsed.host).await.with_context(|| format!("could not resolve {}", parsed.host))?;
@@ -406,29 +405,44 @@ fn registry_client(registry: &str, insecure_dev: bool) -> Result<RegistryClient>
     Ok(RegistryClient::new(url, insecure_dev))
 }
 
-async fn cmd_register(registry: &str, username: &str, password: &str, insecure_dev: bool) -> Result<()> {
-    let client = registry_client(registry, insecure_dev)?;
+fn resolve_registry(flag: Option<String>) -> Result<String> {
+    if let Some(r) = flag {
+        return Ok(r);
+    }
+    if let Ok(env) = std::env::var("SONION_REGISTRY") {
+        return Ok(env);
+    }
+    let s = registry::settings::Settings::load_or_create().context("loading config; pass --registry or set SONION_REGISTRY")?;
+    Ok(s.registry)
+}
+
+async fn cmd_register(registry: Option<String>, username: &str, password: &str, insecure_dev: bool) -> Result<()> {
+    let registry = resolve_registry(registry)?;
+    let client = registry_client(&registry, insecure_dev)?;
     client.create_account(username, password).await.context("registration failed")?;
     println!("account {username} created");
     Ok(())
 }
 
-async fn cmd_login(registry: &str, username: &str, password: &str, insecure_dev: bool) -> Result<()> {
-    let client = registry_client(registry, insecure_dev)?;
+async fn cmd_login(registry: Option<String>, username: &str, password: &str, insecure_dev: bool) -> Result<()> {
+    let registry = resolve_registry(registry)?;
+    let client = registry_client(&registry, insecure_dev)?;
     let key = client.login(username, password).await.context("login failed")?;
     println!("{key}");
     Ok(())
 }
 
-async fn cmd_logout(registry: &str, api_key: &str, insecure_dev: bool) -> Result<()> {
-    let client = registry_client(registry, insecure_dev)?;
+async fn cmd_logout(registry: Option<String>, api_key: &str, insecure_dev: bool) -> Result<()> {
+    let registry = resolve_registry(registry)?;
+    let client = registry_client(&registry, insecure_dev)?;
     client.logout(api_key).await.context("logout failed")?;
     println!("api key revoked");
     Ok(())
 }
 
-async fn cmd_resolve(name: &str, registry: &str, pin_key: Option<String>, insecure_dev: bool) -> Result<()> {
-    let url = SonionUrl::parse(registry).context("invalid --registry URL")?;
+async fn cmd_resolve(name: &str, registry: Option<String>, pin_key: Option<String>, insecure_dev: bool) -> Result<()> {
+    let registry = resolve_registry(registry)?;
+    let url = SonionUrl::parse(&registry).context("invalid --registry URL")?;
     let resolver = SonionResolver::new(url, insecure_dev, pin_key);
     let rec = resolver.resolve(name).await.context("resolve failed")?;
     let json = serde_json::to_string_pretty(&rec)?;
@@ -436,8 +450,9 @@ async fn cmd_resolve(name: &str, registry: &str, pin_key: Option<String>, insecu
     Ok(())
 }
 
-async fn cmd_domains(registry: &str, api_key: &str, insecure_dev: bool) -> Result<()> {
-    let client = registry_client(registry, insecure_dev)?;
+async fn cmd_domains(registry: Option<String>, api_key: &str, insecure_dev: bool) -> Result<()> {
+    let registry = resolve_registry(registry)?;
+    let client = registry_client(&registry, insecure_dev)?;
     let domains = client.list_domains(api_key).await.context("list failed")?;
     if domains.is_empty() {
         println!("no domains");
@@ -450,16 +465,18 @@ async fn cmd_domains(registry: &str, api_key: &str, insecure_dev: bool) -> Resul
     Ok(())
 }
 
-async fn cmd_put_domain(name: &str, registry: &str, api_key: &str, endpoints: Vec<String>, ttl: Option<u64>, insecure_dev: bool) -> Result<()> {
+async fn cmd_put_domain(name: &str, registry: Option<String>, api_key: &str, endpoints: Vec<String>, ttl: Option<u64>, insecure_dev: bool) -> Result<()> {
     anyhow::ensure!(!endpoints.is_empty(), "pass atleast one --endpoints host:port");
-    let client = registry_client(registry, insecure_dev)?;
+    let registry = resolve_registry(registry)?;
+    let client = registry_client(&registry, insecure_dev)?;
     let expires = client.put_domain(api_key, name, &endpoints, ttl).await.context("put domain failed")?;
     println!("{name} registered, expires_at={expires}");
     Ok(())
 }
 
-async fn cmd_delete_domain(name: &str, registry: &str, api_key: &str, insecure_dev: bool) -> Result<()> {
-    let client = registry_client(registry, insecure_dev)?;
+async fn cmd_delete_domain(name: &str, registry: Option<String>, api_key: &str, insecure_dev: bool) -> Result<()> {
+    let registry = resolve_registry(registry)?;
+    let client = registry_client(&registry, insecure_dev)?;
     client.delete_domain(api_key, name).await.context("delete domain failed")?;
     println!("{name} deleted");
     Ok(())
