@@ -188,7 +188,7 @@ impl SonionResolver {
             }
         }
         let at = now();
-        if rec.expires_at <= at || rec.not_before > at {
+        if rec.expires_at <= at || rec.not_before > at + crate::CLOCK_SKEW_SECS {
             return Err(ResolveError::BadValidity);
         }
         if !verify_record(rec, at) {

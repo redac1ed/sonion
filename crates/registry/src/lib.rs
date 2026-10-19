@@ -18,12 +18,13 @@ use tracing::warn;
 const HEAD_TIMEOUT: Duration = Duration::from_secs(15);
 const BODY_TIMEOUT: Duration = Duration::from_secs(60);
 const DEFAULT_TTL_SECS: u64 = 300;
-const DOMAIN_TTL_SECS: u64 = 3600;
+const DOMAIN_TTL_SECS: u64 = 365 * 24 * 3600;
 const MAX_TTL_SECS: u64 = 3600;
 const LOGIN_MAX_FAILURES: u32 = 5;
 const LOGIN_COOLDOWN_SECS: u64 = 60;
 const MAX_PASSWORD_LEN: usize = 256;
 const MAX_ENDPOINTS: usize = 8;
+pub(crate) const CLOCK_SKEW_SECS: u64 = 300;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {
@@ -504,7 +505,7 @@ fn valid_endpoint(s: &str) -> bool {
 }
 
 pub fn verify_record(rec: &ResolveRecord, at_unix: u64) -> bool {
-    if rec.expires_at <= at_unix || rec.not_before > at_unix {
+    if rec.expires_at <= at_unix || rec.not_before > at_unix + CLOCK_SKEW_SECS {
         return false;
     }
     let Ok(key_bytes) = b64_decode(&rec.key) else {

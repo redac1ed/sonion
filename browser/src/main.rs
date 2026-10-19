@@ -4,7 +4,8 @@ use wry::{WebContext, WebViewBuilder};
 use sonion_browser::net::{FetchError, NetStack};
 use sonion_browser::runtime::NetHandle;
 
-const BROWSER: &str = include_str!("../BROWSER.html");
+const BROWSER: &str = include_str!("../browser.html");
+const BAR_HEIGHT: i32 = 78;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter(
@@ -20,32 +21,73 @@ fn main() -> anyhow::Result<()> {
     let window = WindowBuilder::new().with_title("sonion browser").with_inner_size(tao::dpi::LogicalSize::new(1100.0, 720.0)).build(&event_loop)?;
     let mut web_context = WebContext::new(None);
     let net_for_scheme = net.clone();
-    let webview = WebViewBuilder::new_with_web_context(&mut web_context)
-        .with_custom_protocol("sonion".into(), move |_wv, request| {
-            let url = request.uri().to_string();
-            match net_for_scheme.fetch_blocking(&url) {
-                Ok(page) => wry::http::Response::builder().status(page.status).header("Content-Type", &page.content_type).header("Access-Control-Allow-Origin", "*").body(std::borrow::Cow::Owned(page.body)).unwrap(),
-                Err(e) => error_response(&e)
-            }
-        })
-        .with_custom_protocol("sonion-nav".into(), |_wv, request | {
+    let content = std::rc::Rc::new(
+        WebViewBuilder::new_with_web_context(&mut web_context)
+            .with_custom_protocol("sonion".into(), move |_wv, request| {
+                let url = request.uri().to_string();
+                match net_for_scheme.fetch_blocking(&url) {
+                    Ok(page) => wry::http::Response::builder().status(page.status)
+                        .header("Content-Type", &page.content_type)
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(std::borrow::Cow::Owned(page.body)).unwrap(),
+                    Err(e) => error_response(&e) 
+                }
+            }).with_html(HOME_PAGE).with_devtools(true).build_as_child(&window)?
+    );
+    let content_for_ipc = content.clone();
+    let bar = WebViewBuilder::new_with_web_context(&mut web_context)
+        .with_custom_protocol("sonion-nav".into(), |_wv, request| {
             let uri = request.uri().to_string();
-            if let Some(q) = uri.strip_prefix("sonion-nav://external?u=") {
-                let decoded = percent_decode(q);
-                let _ = open_in_default_browser(&decoded);
+            let body = if uri.starts_with("sonion-nav://home") {HOME_PAGE} else {BROWSER};
+            wry::http::Response::builder().status(200).header("Content-Type", "text/html")
+                .body(std::borrow::Cow::Borrowed(body.as_bytes())).unwrap()
+        })
+        .with_ipc_handler(move |req| {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(req.body()) {
+                match v.get("cmd").and_then(|c| c.as_str()) {
+                    Some("nav") => {
+                        if let Some(u) = v.get("url").and_then(|u| u.as_str()) {
+                            let _ = content_for_ipc.load_url(&to_webview_url(u));
+                        }
+                    }
+                    Some("external") => {
+                        if let Some(u) = v.get("url").and_then(|u| u.as_str()) {
+                            let _ = open_in_default_browser(u);
+                        }
+                    }
+                    _ => {}
+                }
             }
-            wry::http::Response::builder().status(200).header("Content-Type", "text/html").body(std::borrow::Cow::Borrowed(HOME_PAGE.as_bytes())).unwrap()
-        }).with_html(BROWSER).with_devtools(true).build(&window)?;
+        }).with_url("sonion-nav://app").with_devtools(true).build_as_child(&window)?;
+    let size = window.inner_size();
+    let _ = bar.set_bounds(wry::Rect {
+        position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)), 
+        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(size.width, BAR_HEIGHT as u32))
+    });
+    let _ = content.set_bounds(wry::Rect {
+        position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, BAR_HEIGHT)), 
+        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(size.width, size.height.saturating_sub(BAR_HEIGHT as u32)))
+    });
+    let content_for_resize = content.clone();
     let net_for_exit = net.clone();
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
-        if let Event::WindowEvent {
-            event: WindowEvent::CloseRequested,
-            ..
-        } = event
-        {
-            net_for_exit.shutdown();
-            *control_flow = ControlFlow::Exit;
+        match event {
+            Event::WindowEvent {event: WindowEvent::CloseRequested, ..} => {
+                net_for_exit.shutdown();
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::WindowEvent {event: WindowEvent::Resized(new_size), ..} => {
+                let _ = bar.set_bounds(wry::Rect {
+                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, 0)),
+                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(new_size.width, BAR_HEIGHT as u32))
+                });
+                let _ = content_for_resize.set_bounds(wry::Rect {
+                    position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(0, BAR_HEIGHT)),
+                    size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(new_size.width, new_size.height.saturating_sub(BAR_HEIGHT as u32))), 
+                });
+            }
+            _ => {}
         }
     });
 }
@@ -74,27 +116,9 @@ fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(b);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
 #[cfg(target_os = "windows")]
 fn open_in_default_browser(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("cmd").args(["/c", "start", "", url]).spawn().map(|_| ())
+    std::process::Command::new("rundll32.exe").args(["url.dll,FileProtocolHandler", url]).spawn().map(|_| ())
 }
 #[cfg(target_os = "macos")]
 fn open_in_default_browser(url: &str) -> std::io::Result<()> {
@@ -103,6 +127,19 @@ fn open_in_default_browser(url: &str) -> std::io::Result<()> {
 #[cfg(all(unix, not(target_os = "macos")))]
 fn open_in_default_browser(url: &str) -> std::io::Result<()> {
     std::process::Command::new("xdg-open").arg(url).spawn().map(|_| ())
+}
+
+#[cfg(target_os = "windows")]
+fn to_webview_url(url: &str) -> String {
+    match url.strip_prefix("sonion://") {
+        Some(rest) => format!("http://sonion.{rest}"),
+        None => url.to_string()
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn to_webview_url(url: &str) -> String {
+    url.to_string()
 }
 
 const HOME_PAGE: &str = "<!DOCTYPE html><html><head><meta charset='utf-8'><style>\
