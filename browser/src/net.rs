@@ -5,7 +5,7 @@ use std::sync::Arc;
 pub struct NetStack {
     resolver: SonionResolver,
     client: Client,
-    insecure_dev: bool,
+    insecure_dev: bool, 
 }
 
 pub struct FetchedPage {

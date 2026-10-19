@@ -77,7 +77,7 @@ async fn handle_conn(
     tcp: tokio::net::TcpStream,
     root: &Path,
 ) -> anyhow::Result<()> {
-    let mut tls = acceptor.accept(tcp).await?;
+    let mut tls = tokio::time::timeout(HEAD_TIMEOUT, acceptor.accept(tcp)).await??;
     match tls.get_ref().1.alpn_protocol() {
         Some(p) if p == ALPN.as_bytes() => {}
         other => {
@@ -105,13 +105,12 @@ async fn handle_conn(
         };
         served += 1;
         let started = Instant::now();
-        let client_close = request.get_header("Connection") 
-            .map(|v| v.eq_ignore_ascii_case("close"))
-            .unwrap_or(false);
+        let client_close = served >= MAX_KEEPALIVE_REQUESTS || request.get_header("Connection")
+            .map(|v| v.eq_ignore_ascii_case("close")).unwrap_or(false);
         if request.method != "GET" && request.method != "HEAD" {
             let mut resp = error_page(root, Status::MethodNotAllowed, b"method not allowed").await;
             resp.set_header("Allow", "GET, HEAD");
-            write_response(&mut tls, &request, resp, client_close).await?;
+            write_response(&mut tls, &request, resp, true).await?;
             info!(method = %request.method, path = %request.path, status = 405, elapsed_us = &started.elapsed().as_micros(), "response");
             return Ok(());
         }

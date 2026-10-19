@@ -389,7 +389,7 @@ impl Registry {
             endpoints: d.endpoints.clone(),
             expires_at: d.expires_at,
             not_before: at,
-            ttl: DEFAULT_TTL_SECS,
+            ttl: d.ttl,
             key: self.verifying_key_b64(),
             signature: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, sig.to_bytes())
         })
@@ -579,7 +579,7 @@ async fn handle(
     registry: Arc<Registry>,
     peer: IpAddr
 ) -> anyhow::Result<()> {
-    let mut tls = acceptor.accept(tcp).await?;
+    let mut tls = tokio::time::timeout(HEAD_TIMEOUT, acceptor.accept(tcp)).await??;
     let deadline = Instant::now() + HEAD_TIMEOUT;
     let mut buf = Vec::with_capacity(16 * 1024);
     let max_head = limits::MAX_REQUEST_LINE + limits::MAX_HEADERS + 4;
@@ -587,7 +587,7 @@ async fn handle(
         if find_header_end(&buf).is_some() {
             break;
         }
-        if buf.len() > max_head + limits::MAX_BODY {
+        if buf.len() > max_head {
             anyhow::bail!("request too large");
         }
         let mut tmp = [0u8; 16 * 1024];
