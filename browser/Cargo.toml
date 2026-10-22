@@ -17,6 +17,7 @@ tracing-subscriber.workspace = true
 thiserror.workspace = true
 rustls.workspace = true
 sonion-server.workspace = true
+mime_guess.workspace = true 
 
 [dev-dependencies]
 tempfile.workspace = true

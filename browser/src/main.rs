@@ -1,11 +1,35 @@
 use sonion_protocol::SonionUrl;
-use tao::{event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoop}, window::WindowBuilder};
-use wry::{WebContext, WebViewBuilder};
+use tao::{event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy}, window::{WindowBuilder, Window}, dpi::PhysicalSize};
+use wry::{WebContext, WebViewBuilder, WebView};
 use sonion_browser::net::{FetchError, NetStack};
 use sonion_browser::runtime::NetHandle;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::rc::Rc;
 
 const BROWSER: &str = include_str!("../browser.html");
 const BAR_HEIGHT: i32 = 78;
+const INITIAL_CHROME_HEIGHT: u32 = 114;
+
+#[derive(Debug, Clone)]
+enum UserEvent {
+    CreateTab {tab_id: String, url : String},
+    SwitchTab {tab_id: String}, 
+    CloseTab {tab_id: String},
+    Navigate {tab_id: String, url: String},
+    Reload {tab_id: String}, 
+    DevTools {tab_id: String},
+    SetChromeHeight {height: u32},
+    OpenExternal {url: String}
+}
+
+struct BrowserState {
+    tabs: HashMap<String, WebView>,
+    active_tab: String,
+    chrome_height: u32
+}
+
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter(

@@ -6,3 +6,4 @@ notes.txt
 /certs
 /registry-data
 config.json
+/browser/ui/node_modules

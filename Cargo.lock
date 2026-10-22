@@ -2384,6 +2384,7 @@ name = "sonion-browser"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "mime_guess",
  "rcgen",
  "registry",
  "rustls",
