@@ -1,4 +1,4 @@
-import { IpcCommand, NativeHostEvent } from "./types";
+import {IpcCommand, NativeHostEvent, BrowserSettings, Profile} from "./types";
 
 declare global {
     interface Window {
@@ -6,6 +6,8 @@ declare global {
             postMessage: (msg: string) => void;
         };
         _onNativeEvent?: (ev: NativeHostEvent) => void;
+        __SONION_SETTINGS__?: BrowserSettings;
+        __SONION_PROFILE__?: Partial<Profile> | null;
     }
 }
 

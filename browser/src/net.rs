@@ -4,8 +4,7 @@ use std::sync::Arc;
 
 pub struct NetStack {
     resolver: SonionResolver,
-    client: Client,
-    insecure_dev: bool, 
+    client: Client, 
 }
 
 pub struct FetchedPage {
@@ -42,7 +41,6 @@ impl NetStack {
         Self {
             resolver, 
             client: Client::new(insecure_dev),
-            insecure_dev
         }
     }
     pub async fn fetch_page(&self, url: &str) -> Result<FetchedPage, FetchError> {

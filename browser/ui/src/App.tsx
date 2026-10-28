@@ -1,17 +1,26 @@
 import React, {useEffect, useState} from "react";
-import {BookmarkItem, HistoryEntry, NativeHostEvent, PanelMode, TabItem} from "./types";
+import {BookmarkItem, BrowserSettings, DownloadItem, HistoryEntry, NativeHostEvent, PanelMode, Profile, SaveResult, TabItem} from "./types";
 import {extractDisplayTitle, normalizeSonionUrl, sendIpc} from "./ipc";
 import {TabStrip} from "./components/TabStrip";
 import {Toolbar} from "./components/Toolbar";
 import {BookmarksBar} from "./components/BookmarksBar";
 import {SidePanel} from "./components/SidePanel";
+import {FindBar} from "./components/FindBar";
 
-const DEFAULT_HOME = "sonion://cool.rizz";
+const BOOT_SETTINGS: BrowserSettings = window.__SONION_SETTINGS__ ?? {
+    registry: "sonion://87.192.41.2:6767",
+    homepage: "sonion://cool.rizz",
+    pin_key: "",
+    insecure_dev: true
+};
+const NEW_TAB_URL = "sonion-nav://home";
+const BOOT_PROFILE: Partial<Profile> | null = window.__SONION_PROFILE__ ?? null;
 const INITIAL_BOOKMARKS: BookmarkItem[] = [
     {id: "bm-1", title: "cool.rizz", url: "sonion://cool.rizz"},
     {id: "bm-2", title: "localhost:6767", url: "sonion://localhost:6767"},
     {id: "bm-3", title: "New Tab", url: "sonion-nav://home"}
 ];
+let nextUid = 2;
 
 function createTabObject(id: string, url: string): TabItem {
     return {
@@ -27,36 +36,106 @@ function createTabObject(id: string, url: string): TabItem {
 
 export const App: React.FC = () => {
     const [tabs, setTabs] = useState<TabItem[]>(() => [
-        createTabObject("tab-1", DEFAULT_HOME)
+        createTabObject("tab-1", NEW_TAB_URL)
     ]);
     const [activeTabId, setActiveTabId] = useState<string>("tab-1");
-    const [addressInput, setAddressInput] = useState<string>(DEFAULT_HOME);
-    const [bookmarks, setBookmarks] = useState<BookmarkItem[]>(INITIAL_BOOKMARKS);
-    const [globalHistory, setGlobalHistory] = useState<HistoryEntry[]>([
-        {
-            id: "h-init",
-            title: "cool.rizz",
-            url: DEFAULT_HOME,
-            timestamp: Date.now()
-        }
-    ]);
+    const [addressInput, setAddressInput] = useState<string>("");
+    const [bookmarks, setBookmarks] = useState<BookmarkItem[]>(BOOT_PROFILE?.bookmarks ?? INITIAL_BOOKMARKS);
+    const [globalHistory, setGlobalHistory] = useState<HistoryEntry[]>(BOOT_PROFILE?.history ?? []);
+    const [zoom, setZoom] = useState<number>(100);
+    const [settings, setSettings] = useState<BrowserSettings>(BOOT_SETTINGS);
+    const [saveResult, setSaveResult] = useState<SaveResult | null>(null); 
+    const [downloads, setDownloads] = useState<DownloadItem[]>([]);
+    const [findOpen, setFindOpen] = useState<boolean>(false);
+    const [findQuery, setFindQuery] = useState<string>("");
+    const [findCount, setFindCount] = useState({current: 0, total: 0});
+    const [findFocus, setFindFocus] = useState<number>(0);
     const [panelMode, setPanelMode] = useState<PanelMode>("none");
+    const [maximized, setMaximized] = useState<boolean>(false);
     const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
     const isBookmarked = bookmarks.some((b) => b.url === activeTab.url);
+    const downloading = downloads.some((d) => d.state === "in_progress");
+    const showBookmarkRow = bookmarks.length > 0 || findOpen;
+    const chromeHeight = showBookmarkRow ? 114 : 84;
+
+    const openFind = () => {
+        setPanelMode("none");
+        setFindOpen(true);
+        setFindFocus((n) => n + 1);
+    };
+
+    const closeFind = () => {
+        if (!findOpen) return;
+        setFindOpen(false);
+        setFindQuery("");
+        setFindCount({current: 0, total: 0});
+        sendIpc({cmd: "find_clear", tabId: activeTab.id});
+    };
+
+    const runFind = (query: string, dir: number) => {
+        if (!query) {
+            setFindCount({current: 0, total: 0});
+            sendIpc({cmd: "find_clear", tabId: activeTab.id});
+            return;
+        }
+        sendIpc({cmd: "find", tabId: activeTab.id, query, dir});
+    };
 
     useEffect(() => {
-        const baseHeight = 114;
-        const drawerExtra = panelMode === "none" ? 0 : 140;
-        sendIpc({cmd: "set_chrome_height", height: baseHeight + drawerExtra});
+        sendIpc({cmd: "set_chrome_height", height: chromeHeight, overlay: panelMode !== "none"});
+    }, [panelMode, chromeHeight]);
+
+    useEffect(() => {
+        setSaveResult(null);
     }, [panelMode]);
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            sendIpc({cmd: "save_profile", profile: {bookmarks, history: globalHistory.slice(0, 1000)}});
+        }, 400);
+        return () => clearTimeout(timer);
+    }, [bookmarks, globalHistory]);
+
     useEffect(() => {
         window._onNativeEvent = (ev: NativeHostEvent) => {
+            if (ev.event === "window_state") {
+                setMaximized(!!ev.maximized);
+                return;
+            }
+            if (ev.event === "settings_saved") {
+                if (ev.ok && ev.settings) setSettings(ev.settings);
+                setSaveResult({ok: !!ev.ok, error: ev.error});
+                if (ev.ok) setTimeout(() => setSaveResult(null), 1800);
+                return;
+            }
+            if (ev.event === "download" && ev.download) {
+                const item = ev.download;
+                setDownloads((prev) =>
+                    prev.some((d) => d.id === item.id)
+                        ? prev.map((d) => (d.id === item.id ? item : d))
+                        : [item, ...prev]
+                );
+                if (item.state === "in_progress") setPanelMode("downloads");
+                return;
+            }
+            if (ev.event === "find_result") {
+                setFindCount({current: ev.current ?? 0, total: ev.total ?? 0});
+                return;
+            }
+            if (ev.event === "shortcut") {
+                if (ev.key === "f") openFind();
+                return;
+            }
+            if (ev.event === "open" && ev.url) {
+                navigateTab(ev.tabId, ev.url, true);
+                return;
+            }
             setTabs((prev) => 
                 prev.map((t) => {
                     if (t.id !== ev.tabId) return t;
                     return {
                         ...t, 
-                        loading: ev.event === "page_loaded" ? false : t.loading,
+                        loading: ev.event === "page_started" ? true : ev.event === "page_loaded" ? false : t.loading,
                         title: ev.title ?? t.title,
                         url: ev.url ?? t.url
                     };
@@ -64,6 +143,7 @@ export const App: React.FC = () => {
             );
         };
     }, []);
+
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.ctrlKey && e.key.toLowerCase() === "t") {
@@ -75,6 +155,9 @@ export const App: React.FC = () => {
             } else if (e.ctrlKey && e.key.toLowerCase() === "r") {
                 e.preventDefault();
                 handleReload();
+            } else if (e.ctrlKey && e.key.toLowerCase() === "f") {
+                e.preventDefault();
+                openFind();
             }
         };
         window.addEventListener("keydown", onKeyDown);
@@ -103,7 +186,7 @@ export const App: React.FC = () => {
                     title: extractDisplayTitle(target),
                     history: nextHistory,
                     historyIndex: nextIndex,
-                    loading: false,
+                    loading: true,
                     secure: target.startsWith("sonion://")
                 };
             })
@@ -134,7 +217,7 @@ export const App: React.FC = () => {
     };
 
     const handleNewTab = () => {
-        const newId = `tab-${Date.now()}`;
+        const newId = `tab-${nextUid++}`;
         const initialUrl = "sonion-nav://home";
         const newTab = createTabObject(newId, initialUrl);
         setTabs((prev) => [...prev, newTab]);
@@ -172,6 +255,7 @@ export const App: React.FC = () => {
                     historyIndex: nextIdx,
                     url: targetUrl,
                     title: extractDisplayTitle(targetUrl),
+                    loading: true
                 } : t
             )
         );
@@ -198,11 +282,12 @@ export const App: React.FC = () => {
     };
 
     const handleReload = () => {
+        setTabs((prev) => prev.map((t) => (t.id === activeTab.id ? {...t, loading: true} : t)));
         sendIpc({cmd: "reload", tabId: activeTab.id})
     };
 
     const handleHome = () => {
-        navigateTab(activeTab.id, DEFAULT_HOME, true);
+        navigateTab(activeTab.id, settings.homepage, true);
     };
 
     const handleToggleBookmark = () => {
@@ -228,31 +313,76 @@ export const App: React.FC = () => {
                 onSelectTab={handleSelectTab}
                 onCloseTab={handleCloseTab}
                 onNewTab={handleNewTab}
+                maximized={maximized}
+                onWindowCommand={(cmd) => sendIpc({cmd})}
             />
             <Toolbar
                 activeTab={activeTab}
                 addressInput={addressInput}
                 isBookmarked={isBookmarked}
                 panelMode={panelMode}
+                downloadCount={downloads.length}
+                downloading={downloading}
                 onAddressChange={setAddressInput}
                 onNavigateSubmit={() => navigateTab(activeTab.id, addressInput, true)}
                 onBack={handleBack}
-                onForward={handleReload}
+                onForward={handleForward}
                 onReload={handleReload}
                 onHome={handleHome}
                 onToggleBookmark={handleToggleBookmark}
                 onTogglePanel={setPanelMode}
                 onOpenDevtools={() => sendIpc({cmd: "devtools", tabId: activeTab.id})}
             />
-            <BookmarksBar
-                bookmarks={bookmarks}
-                onSelectBookmark={(url) => navigateTab(activeTab.id, url, true)}
-            />
+            {showBookmarkRow && (
+                <BookmarksBar
+                    bookmarks={bookmarks}
+                    onSelectBookmark={(url) => navigateTab(activeTab.id, url, true)}
+                />
+            )}
+            {findOpen && (
+                <FindBar
+                    query={findQuery}
+                    current={findCount.current}
+                    total={findCount.total}
+                    focusToken={findFocus}
+                    onQueryChange={(query) => {
+                        setFindQuery(query);
+                        runFind(query, 0);
+                    }}
+                    onNext={() => runFind(findQuery, 1)}
+                    onPrev={() => runFind(findQuery, -1)}
+                    onClose={closeFind}
+                />
+            )}
             <SidePanel
                 mode={panelMode}
+                setMode={setPanelMode}
                 historyEntries={globalHistory}
+                bookmarks={bookmarks}
+                downloads={downloads}
+                settings={settings}
+                saveResult={saveResult}
+                zoom={zoom}
+                onZoomChange={(nextZoom) => {
+                    setZoom(nextZoom);
+                    sendIpc({cmd: "zoom", tabId: activeTab.id, zoom: nextZoom});
+                }}
+                onFullscreen={() => sendIpc({cmd: "fullscreen"})}
+                onNewTab={handleNewTab}
+                onNewWindow={() => sendIpc({cmd: "new_window"})}
+                onPrint={() => sendIpc({cmd: "print", tabId: activeTab.id})}
+                onSavePage={() => sendIpc({cmd: "save_page", tabId: activeTab.id})}
+                onFind={openFind}
+                onExit={() => sendIpc({cmd: "exit"})}
+                onSaveSettings={(next) => {
+                    setSaveResult(null);
+                    sendIpc({cmd: "save_settings", settings: next});
+                }}
                 onNavigate={(url) => navigateTab(activeTab.id, url, true)}
                 onClearHistory={() => setGlobalHistory([])}
+                onOpenDownload={(path) => sendIpc({cmd: "open_download", path})}
+                onShowDownload={(path) => sendIpc({cmd: "show_download", path})}
+                onClearDownloads={() => setDownloads((prev) => prev.filter((d) => d.state === "in_progress"))}
                 onClose={() => setPanelMode("none")}
             />
         </div>

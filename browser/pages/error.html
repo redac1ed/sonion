@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{{title}}</title>
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+        body {
+            margin: 0;
+            background: #000000;
+            color: #a3a3a3;
+            font: 14px/1.6 "Segoe UI", system-ui, sans-serif;
+        }
+        main {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 16vh 40px 40px;
+        }
+        svg {
+            display: block;
+            width: 60px;
+            height: 50px;
+            margin-bottom: 40px;
+            color: #d4d4d4;
+        }
+        h1 {
+            margin: 0 0 18px;
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 400;
+        }
+        p {
+            margin: 0;
+        }
+        ul {
+            margin: 2px 0 26px;
+            padding-left: 22px;
+        }
+        li {
+            margin: 2px 0;
+        }
+        .code {
+            font-size: 11.5px;
+            color: #737373;
+        }
+        .detail {
+            margin-top: 6px;
+            font: 11.5px/1.5 ui-monospace, Consolas, monospace;
+            color: #525252;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <svg viewBox="0 0 24 20" shape-rendering="crispEdges" fill="currentColor" aria-hidden="true">
+            <path fill="none" stroke="currentColor" d="M1.5 1.5H9.5V2.5H10.5V3.5H22.5V18.5H1.5Z"/>
+            <rect x="1" y="5" width="22" height="1"/>
+            <rect x="7" y="9" width="1" height="1"/>
+            <rect x="9" y="9" width="1" height="1"/>
+            <rect x="8" y="10" width="1" height="1"/>
+            <rect x="7" y="11" width="1" height="1"/>
+            <rect x="9" y="11" width="1" height="1"/>
+            <rect x="14" y="9" width="1" height="1"/>
+            <rect x="16" y="9" width="1" height="1"/>
+            <rect x="15" y="10" width="1" height="1"/>
+            <rect x="14" y="11" width="1" height="1"/>
+            <rect x="16" y="11" width="1" height="1"/>
+            <rect x="9" y="14" width="6" height="1"/>
+            <rect x="8" y="15" width="1" height="1"/>
+            <rect x="15" y="15" width="1" height="1"/>
+        </svg>
+        <h1>{{title}}</h1>
+        <p>Try the following tips:</p>
+        <ul>{{tips}}</ul>
+        <p class="code">Error code: {{code}}</p>
+        <p class="detail">{{detail}}</p>
+    </main>
+</body>
+</html>

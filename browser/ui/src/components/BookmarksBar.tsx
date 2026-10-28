@@ -20,7 +20,7 @@ export const BookmarksBar: React.FC<BookmarksBarProps> = ({
                     onClick={() => onSelectBookmark(bm.url)}
                     title={bm.url}
                 >
-                    <BookmarkBorderIcon sx={{fontSize: 14, color: "#67e8f9"}} />
+                    <BookmarkBorderIcon sx={{fontSize: 14, color: "#ffffff"}} />
                     <span>{bm.title}</span>
                 </button>
             ))}

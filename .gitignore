@@ -7,3 +7,4 @@ notes.txt
 /registry-data
 config.json
 /browser/ui/node_modules
+/browser/ui/dist

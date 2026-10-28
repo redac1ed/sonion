@@ -7,9 +7,8 @@ import LockIcon from "@mui/icons-material/Lock";
 import PublicIcon from "@mui/icons-material/Public";
 import StarBorderIcon from "@mui/icons-material/StarBorder";
 import StarIcon from "@mui/icons-material/Star"
-import HistoryIcon from "@mui/icons-material/History";
-import TerminalIcon from "@mui/icons-material/Terminal";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
+import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import {PanelMode, TabItem} from "../types"
 
 interface ToolbarProps {
@@ -17,6 +16,8 @@ interface ToolbarProps {
     addressInput: string;
     isBookmarked: boolean;
     panelMode: PanelMode;
+    downloadCount: number;
+    downloading: boolean;
     onAddressChange: (value: string) => void;
     onNavigateSubmit: () => void;
     onBack: () => void;
@@ -33,6 +34,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
     addressInput, 
     isBookmarked,
     panelMode,
+    downloadCount,
+    downloading,
     onAddressChange,
     onNavigateSubmit,
     onBack,
@@ -52,7 +55,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 className="icon-btn"
                 disabled={!canGoBack}
                 onClick={onBack}
-                title="Back (Alt+Left)"
+                title="Back"
             >
                 <ArrowBackIcon sx={{fontSize: 18}} />
             </button>
@@ -60,16 +63,16 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 className="icon-btn"
                 disabled={!canGoForward}
                 onClick={onForward}
-                title="Forward (Alt+Right)"
+                title="Forward"
             >
                 <ArrowForwardIcon sx={{fontSize: 18}} /> 
             </button>
             <button 
                 className="icon-btn"
                 onClick={onReload}
-                title="Reload (Ctrl+R)"
+                title="Reload"
             >
-                <RefreshIcon sx={{fontSize: 18}} /> 
+                <RefreshIcon className={activeTab.loading ? "spin-icon" : ""} sx={{fontSize: 18}} /> 
             </button>
             <button 
                 className="icon-btn"
@@ -107,37 +110,29 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                     title={isBookmarked ? "Remove bookmark" : "Bookmark this page"}
                 >
                     {isBookmarked ? (
-                        <StarIcon sx={{fontSize: 17, color: "#facc15"}} />
+                        <StarIcon sx={{fontSize: 17, color: "#ffffff"}} />
                     ) : (
                         <StarBorderIcon sx={{fontSize:17}} />
                     )}
                 </button>
             </div>
-            <button 
-                className={`icon-btn ${panelMode === "history" ? "active-toggle" : ""}`}
-                onClick={() => 
-                    onTogglePanel(panelMode === "history" ? "none" : "history")
-                }
-                title="History"
-            >
-                <HistoryIcon sx={{fontSize: 18}} />
-            </button>
-            <button 
-                className="icon-btn"
-                onClick={onOpenDevtools}
-                title="Developer Tools"
-            >
-                <TerminalIcon sx={{fontSize: 18}} /> 
-            </button>
+            {downloadCount > 0 && (
+                <button className={`icon-btn ${panelMode === "downloads" ? "active-toggle" : ""} ${downloading ? "downloading" : ""}`}
+                    onClick={() => onTogglePanel(panelMode === "downloads" ? "none" : "downloads")}
+                    title="Downloads"> 
+                    <FileDownloadOutlinedIcon sx={{fontSize: 18}} />
+                </button>
+            )}
             <button
-                className={`icon-btn ${panelMode === "settings" ? "active-toggle" : ""}`}
+                className={`icon-btn ${panelMode !== "none" ? "active-toggle" : ""}`}
                 onClick={() => 
-                    onTogglePanel(panelMode === "settings" ? "none": "settings")
+                    onTogglePanel(panelMode === "menu" ? "none": "menu")
                 }
-                title="Browser Info & Settings"
+                title="Controls"
             >
-                {/* <MoreVertIcon sx={{fontSize:18}} /> */}
+                <MoreVertIcon sx={{fontSize:18}} />
             </button>
+            {activeTab.loading && <div className="nav-progress-bar" />}
         </div>
     );
 };

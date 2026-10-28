@@ -7,6 +7,11 @@ pub enum NetCommand {
         url: String, 
         reply: oneshot::Sender<Result<FetchedPage, Arc<FetchError>>>
     },
+    FetchAsync {
+        url: String,
+        done: Box<dyn FnOnce(Result<FetchedPage, Arc<FetchError>>) + Send + 'static>
+    },
+    Reconfigure(NetStack),
     Shutdown
 }
 
@@ -22,6 +27,7 @@ impl NetHandle {
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("tokio runtime");
             rt.block_on(async move {
+                let mut stack = stack;
                 while let Some(cmd) = rx.recv().await {
                     match cmd {
                         NetCommand::Fetch {url, reply} => {
@@ -31,6 +37,14 @@ impl NetHandle {
                                 let _ = reply.send(result);
                             });
                         }
+                        NetCommand::FetchAsync {url, done} => {
+                            let stack = stack.clone();
+                            tokio::spawn(async move {
+                                let result = stack.fetch_page(&url).await.map_err(Arc::new);
+                                done(result);
+                            });
+                        }
+                        NetCommand::Reconfigure(next) => stack = Arc::new(next),
                         NetCommand::Shutdown => break
                     }
                 }
@@ -51,6 +65,15 @@ impl NetHandle {
             Ok(r) => r,
             Err(_) => Err(Arc::new(FetchError::BadUrl("net worker dropped".into())))
         }
+    }
+    pub fn fetch_async<F>(&self, url: &str, done: F) where F: FnOnce(Result<FetchedPage, Arc<FetchError>>) + Send + 'static {
+        let _ = self.tx.send(NetCommand::FetchAsync {
+            url: url.to_string(),
+            done: Box::new(done) 
+        });
+    }
+    pub fn reconfigure(&self, stack: NetStack) {
+        let _ = self.tx.send(NetCommand::Reconfigure(stack));
     }
     pub fn shutdown(&self) {
         let _ = self.tx.send(NetCommand::Shutdown);
