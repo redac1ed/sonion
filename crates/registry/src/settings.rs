@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 pub const DEFAULT_REGISTRY: &str = "sonion://registry.sonion.redac.me:6767";
+pub const DEFAULT_REGISTRY_KEY: &str = "sNX4JwTy9MXRc+N8n/JfH+QwFyQRHq35RgkHyU12bic=";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -61,6 +62,11 @@ fn config_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."));
     base.join("sonion")
 }
+
+pub fn default_pin_for(registry: &str) -> Option<String> {
+    (registry.trim().trim_end_matches('/') == DEFAULT_REGISTRY).then(|| DEFAULT_REGISTRY_KEY.to_string())
+}
+
 
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {

@@ -150,7 +150,7 @@ fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();
     let settings = registry::settings::Settings::load_or_create().map_err(|e| anyhow::anyhow!("loading config {}: {e}", registry::settings::Settings::path().display()))?;
     let registry_str = std::env::var("SONION_REGISTRY").unwrap_or_else(|_| settings.registry.clone());
-    let pin_key = std::env::var("SONION_REGISTRY_KEY").ok().or_else(|| settings.pin_key.clone());
+    let pin_key = std::env::var("SONION_REGISTRY_KEY").ok().or_else(|| settings.pin_key.clone()).or_else(|| registry::settings::default_pin_for(&registry_str));
     let insecure_dev = std::env::var("SONION_INSECURE_DEV").is_ok() || settings.insecure_dev;
     let registry_url = Some(SonionUrl::parse(&registry_str).map_err(|e| anyhow::anyhow!("bad registry url {registry_str}: {e}"))?);
     let net = NetHandle::spawn(NetStack::new(registry_url, pin_key, insecure_dev));
@@ -395,7 +395,8 @@ fn main() -> anyhow::Result<()> {
                 UserEvent::SaveSettings {settings} => {
                     let payload = match validate_and_save(&settings) {
                         Ok(registry_url) => {
-                            net_for_loop.reconfigure(NetStack::new(Some(registry_url), settings.pin_key.clone(), settings.insecure_dev));
+                            let pin_key = settings.pin_key.clone().or_else(|| registry::settings::default_pin_for(&settings.registry));
+                            net_for_loop.reconfigure(NetStack::new(Some(registry_url), pin_key, settings.insecure_dev));
                             serde_json::json!({"event": "settings_saved", "tabId": "", "ok": true, "settings": settings_to_ui(&settings)})
                         }
                         Err(error) => serde_json::json!({"event": "settings_saved", "tabId": "", "ok": false, "error": error})
