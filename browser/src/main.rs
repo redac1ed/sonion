@@ -1,7 +1,7 @@
 use sonion_protocol::SonionUrl;
 use tao::{event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy}, window::{Window, WindowBuilder}};
 use wry::{WebContext, WebViewBuilder, WebView};
-use sonion_browser::net::{FetchError, NetStack};
+use sonion_browser::net::{FetchError, FetchedPage, NetStack, OutgoingRequest};
 use sonion_browser::runtime::NetHandle;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -127,12 +127,22 @@ fn spawn_tab_webview(window: &Window, web_context: &mut WebContext, net: NetHand
             let _ = proxy_for_dl_done.send_event(UserEvent::NativeDownloadFinished {url, path, ok});
         })
         .with_asynchronous_custom_protocol("sonion".into(), move |_wv, request, responder| {
-            let url = request.uri().to_string();
-            net.fetch_async(&url, move |result| {
+            if *request.method() == wry::http::Method::OPTIONS && request.headers().contains_key("access-control-request-method") {
+                responder.respond(preflight_response(&request));
+                return;
+            }
+            let (parts, body) = request.into_parts();
+            let outgoing = OutgoingRequest {
+                method: parts.method.as_str().to_string(),
+                url: parts.uri.to_string(),
+                headers: parts.headers.iter()
+                    .filter_map(|(name, value)| Some((name.as_str().to_string(), value.to_str().ok()?.to_string())))
+                    .collect(),
+                body
+            };
+            net.send_async(outgoing, move |result| {
                 let resp = match result {
-                    Ok(page) => wry::http::Response::builder().status(page.status)
-                        .header("Content-Type", &page.content_type).header("Access-Control-Allow-Origin", "*")
-                        .body(std::borrow::Cow::Owned(page.body)).unwrap(),
+                    Ok(page) => page_response(page),
                     Err(e) => error_response(&e)
                 };
                 responder.respond(resp);
@@ -503,6 +513,35 @@ fn serve_ui_asset(dist_dir: &std::path::Path, raw_path: &str) -> wry::http::Resp
     wry::http::Response::builder().status(500)
         .header("Content-Type", "text/plain")
         .body(std::borrow::Cow::Borrowed(b"UI not built, run `npm install && npm run build` inside browser/ui".as_slice())).unwrap()
+}
+
+fn page_response(page: FetchedPage) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
+    let has_cors = page.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("access-control-allow-origin"));
+    let mut builder = wry::http::Response::builder().status(page.status).header("Content-Type", &page.content_type);
+    if !has_cors {
+        builder = builder.header("Access-Control-Allow-Origin", "*");
+    }
+    for (name, value) in &page.headers {
+        let value = if name.eq_ignore_ascii_case("location") { to_webview_url(value) } else { value.clone() };
+        builder = builder.header(name.as_str(), value);
+    }
+    builder.body(std::borrow::Cow::Owned(page.body)).unwrap_or_else(|_| {
+        wry::http::Response::builder().status(502).header("Content-Type", "text/plain")
+            .body(std::borrow::Cow::Borrowed(b"bad response from site".as_slice())).unwrap()
+    })
+}
+
+fn preflight_response(request: &wry::http::Request<Vec<u8>>) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
+    let allow_headers = request.headers().get("access-control-request-headers")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("*")
+        .to_string();
+    wry::http::Response::builder().status(204)
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
+        .header("Access-Control-Allow-Headers", allow_headers)
+        .header("Access-Control-Max-Age", "600")
+        .body(std::borrow::Cow::Borrowed(b"".as_slice())).unwrap()
 }
 
 fn error_response(err: &FetchError) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {

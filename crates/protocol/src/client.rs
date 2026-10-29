@@ -176,7 +176,6 @@ pub struct Client {
 
 struct Pooled {
     tls: TlsConn,
-    buf: Vec<u8>, 
     idle_since: Instant
 }
 
@@ -189,33 +188,26 @@ impl Client {
     }
     pub async fn send(&self, url: &SonionUrl, request: &Request) -> Result<Response, ClientError> {
         let key = (url.host.clone(), url.port);
-        let mut pooled = self.take(&key).await;
-        let fresh;
-        let (tls, buf) = match pooled.take() {
-            Some(p) => {
-                let mut p = p;
-                if !p.buf.is_empty() {
-                    let mut discard = Vec::new();
-                    std::mem::swap(&mut p.buf, &mut discard);
+        let mut buf = Vec::with_capacity(64 * 1024);
+        if is_idempotent(&request.method) {
+            if let Some(p) = self.take(&key).await {
+                let mut tls = p.tls;
+                if let Ok(resp) = send_on(&mut tls, &mut buf, request).await {
+                    self.release(key, tls, &buf, request, &resp).await;
+                    return Ok(resp);
                 }
-                (p.tls, p.buf)
+                buf.clear();
             }
-            None => {
-                fresh = connect(url, self.insecure_dev).await?;
-                (fresh, Vec::with_capacity(64 * 1024))
-            }
-        };
-        let mut tls = tls;
-        let mut buf = buf;
-        match send_on(&mut tls, &mut buf, request).await {
-            Ok(resp) => {
-                if !wants_close(&resp) && request_wants_keep_alive(request) {
-                    self.put(key, tls, buf).await;
-                }
-                Ok(resp)
-            }
-            Err(e) => Err(e)
-        } 
+        }
+        let mut tls = connect(url, self.insecure_dev).await?;
+        let resp = send_on(&mut tls, &mut buf, request).await?;
+        self.release(key, tls, &buf, request, &resp).await;
+        Ok(resp)
+    }
+    async fn release(&self, key: (String, u16), tls: TlsConn, leftover: &[u8], request: &Request, resp: &Response) {
+        if leftover.is_empty() && !wants_close(resp) && request_wants_keep_alive(request) {
+            self.put(key, tls).await;
+        }
     }
     async fn take(&self, key: &(String, u16)) -> Option<Pooled> {
         let mut map = self.conns.lock().await;
@@ -227,11 +219,10 @@ impl Client {
         }
         None
     }
-    async fn put(&self, key: (String, u16), tls: TlsConn, buf: Vec<u8>) {
+    async fn put(&self, key: (String, u16), tls: TlsConn) {
         let mut map = self.conns.lock().await;
         map.entry(key).or_default().push(Pooled {
             tls, 
-            buf, 
             idle_since: Instant::now()
         });
     }
@@ -247,6 +238,10 @@ impl Client {
         let map = self.conns.lock().await;
         map.values().map(|v| v.len()).sum()
     }
+}
+
+fn is_idempotent(method: &str) -> bool {
+    matches!(method, "GET" | "HEAD" | "PUT" | "DELETE" | "OPTIONS")
 }
 
 fn request_wants_keep_alive(req: &Request) -> bool {

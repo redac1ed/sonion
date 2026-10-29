@@ -2,14 +2,36 @@ use registry::client::SonionResolver;
 use sonion_protocol::{Client, Request, Response, SonionUrl};
 use std::sync::Arc;
 
+const SKIP_REQUEST_HEADERS: &[&str] = &["host", "connection", "content-length", "transfer-encoding", "keep-alive", "upgrade"];
+const SKIP_RESPONSE_HEADERS: &[&str] = &["host", "connection", "content-length", "transfer-encoding", "keep-alive", "upgrade"];
+
 pub struct NetStack {
     resolver: SonionResolver,
     client: Client, 
 }
 
+pub struct OutgoingRequest {
+    pub method: String,
+    pub url: String, 
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>
+}
+
+impl OutgoingRequest {
+    pub fn get(url: &str) -> Self {
+        Self {
+            method: "GET".into(),
+            url: url.to_string(),
+            headers: Vec::new(),
+            body: Vec::new()
+        }
+    }
+}
+
 pub struct FetchedPage {
     pub status: u16,
     pub content_type: String,
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>
 }
 
@@ -44,15 +66,17 @@ impl NetStack {
         }
     }
     pub async fn fetch_page(&self, url: &str) -> Result<FetchedPage, FetchError> {
-        let parsed = SonionUrl::parse(url).map_err(|e| FetchError::BadUrl(e.to_string()))?;
-        let is_name = is_domain_name(&parsed.host);
-        let resp = if is_name {
+        self.fetch(OutgoingRequest::get(url)).await
+    }
+    pub async fn fetch(&self, outgoing: OutgoingRequest) -> Result<FetchedPage, FetchError> {
+        let parsed = SonionUrl::parse(&outgoing.url).map_err(|e| FetchError::BadUrl(e.to_string()))?;
+        let resp = if is_domain_name(&parsed.host) {
             let rec = self.resolver.resolve(&parsed.host).await?;
             let mut last = None;
             let mut out = None;
             for ep in &rec.endpoints {
                 let Some(target) = registry::client::endpoint_url(ep, &parsed.encoded_path()) else { continue; };
-                let req = Request::get(&target.encoded_path()).header("Host", &parsed.host);
+                let req = build_request(&outgoing, &target.encoded_path(), &parsed.host);
                 match self.client.send(&target, &req).await {
                     Ok(r) => {
                         out = Some(r);
@@ -70,7 +94,7 @@ impl NetStack {
                 }
             }
         } else {
-            let req = Request::get(&parsed.encoded_path()).header("Host", &parsed.host);
+            let req = build_request(&outgoing, &parsed.encoded_path(), &parsed.host);
             self.client.send(&parsed, &req).await?
         };
         Ok(page_from_response(resp))
@@ -78,6 +102,19 @@ impl NetStack {
     pub fn resolver(&self) -> &SonionResolver {
         &self.resolver
     }
+}
+
+fn build_request(outgoing: &OutgoingRequest, path: &str, host: &str) -> Request {
+    let mut req = Request::new(&outgoing.method, path).header("Host", host);
+    for (name, value) in &outgoing.headers {
+        let bad = name.contains(|c: char| c == ':' || c == '\r' || c == '\n') || value.contains(|c: char| c == '\r' || c == '\n');
+        if bad || SKIP_REQUEST_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
+            continue;
+        }
+        req = req.header(name, value);
+    }
+    req.body = outgoing.body.clone();
+    req
 }
 
 pub fn is_domain_name(host: &str) -> bool {
@@ -89,9 +126,12 @@ pub fn is_domain_name(host: &str) -> bool {
 
 fn page_from_response(resp: Response) -> FetchedPage {
     let content_type = resp.get_header("Content-Type").unwrap_or("application/octet-stream").to_string();
+    let headers = resp.headers.iter()
+        .filter(|(n, _)| !SKIP_RESPONSE_HEADERS.contains(&n.to_ascii_lowercase().as_str())).cloned().collect();
     FetchedPage {
         status: resp.status.code(),
         content_type,
+        headers,
         body: resp.body
     }
 }

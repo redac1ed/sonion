@@ -5,82 +5,138 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     Ok,
+    Created,
+    Accepted,
+    NoContent,
     MovedPermanently,
     Found,
+    SeeOther,
     NotModified,
+    TemporaryRedirect,
+    PermanentRedirect,
     BadRequest,
     Unauthorized,
     Forbidden,
     NotFound,
     MethodNotAllowed,
     Conflict,
+    Gone,
     PayloadTooLarge,
+    UnsupportedMediaType,
+    UnprocessableEntity,
     TooManyRequests,
     InternalServerError,
+    NotImplemented,
+    BadGateway,
     ServiceUnavailable,
+    GatewayTimeout,
 }
 
 impl Status {
     pub fn code(self) -> u16 {
         match self {
             Status::Ok => 200,
+            Status::Created => 201,
+            Status::Accepted => 202,
+            Status::NoContent => 204,
             Status::MovedPermanently => 301,
             Status::Found => 302,
+            Status::SeeOther => 303,
             Status::NotModified => 304,
+            Status::TemporaryRedirect => 307,
+            Status::PermanentRedirect => 308,
             Status::BadRequest => 400,
             Status::Unauthorized => 401,
             Status::Forbidden => 403,
             Status::NotFound => 404,
             Status::MethodNotAllowed => 405,
             Status::Conflict => 409,
+            Status::Gone => 410,
             Status::PayloadTooLarge => 413,
+            Status::UnsupportedMediaType => 415,
+            Status::UnprocessableEntity => 422,
             Status::TooManyRequests => 429,
             Status::InternalServerError => 500,
+            Status::NotImplemented => 501,
+            Status::BadGateway => 502,
             Status::ServiceUnavailable => 503,
+            Status::GatewayTimeout => 504,
         }
     }
     pub fn from_code(code: u16) -> Result<Status, ProtocolError> {
         match code {
             200 => Ok(Status::Ok),
+            201 => Ok(Status::Created),
+            202 => Ok(Status::Accepted),
+            204 => Ok(Status::NoContent),
             301 => Ok(Status::MovedPermanently),
             302 => Ok(Status::Found),
+            303 => Ok(Status::SeeOther),
             304 => Ok(Status::NotModified),
+            307 => Ok(Status::TemporaryRedirect),
+            308 => Ok(Status::PermanentRedirect),
             400 => Ok(Status::BadRequest),
             401 => Ok(Status::Unauthorized),
             403 => Ok(Status::Forbidden),
             404 => Ok(Status::NotFound),
             405 => Ok(Status::MethodNotAllowed),
             409 => Ok(Status::Conflict),
+            410 => Ok(Status::Gone),
             413 => Ok(Status::PayloadTooLarge),
+            415 => Ok(Status::UnsupportedMediaType),
+            422 => Ok(Status::UnprocessableEntity),
             429 => Ok(Status::TooManyRequests),
             500 => Ok(Status::InternalServerError),
+            501 => Ok(Status::NotImplemented),
+            502 => Ok(Status::BadGateway),
             503 => Ok(Status::ServiceUnavailable),
+            504 => Ok(Status::GatewayTimeout),
             c => Err(ProtocolError::InvalidStatus(c)),
         }
+    }
+    pub fn nearest(code: u16) -> Status {
+        Status::from_code(code).unwrap_or(match code {
+            100..=299 => Status::Ok,
+            300..=399 => Status::Found,
+            400..=499 => Status::BadRequest,
+            _ => Status::BadGateway,
+        })
     }
     pub fn reason(self) -> &'static str {
         match self {
             Status::Ok => "ok",
+            Status::Created => "created",
+            Status::Accepted => "accepted",
+            Status::NoContent => "no content",
             Status::MovedPermanently => "moved permanently",
             Status::Found => "found",
+            Status::SeeOther => "see other",
             Status::NotModified => "not modified",
+            Status::TemporaryRedirect => "temporary redirect",
+            Status::PermanentRedirect => "permanent redirect",
             Status::BadRequest => "bad request",
             Status::Unauthorized => "unauthorized",
             Status::Forbidden => "forbidden",
             Status::NotFound => "not found",
             Status::MethodNotAllowed => "method not allowed",
             Status::Conflict => "conflict",
+            Status::Gone => "gone",
             Status::PayloadTooLarge => "payload too large",
+            Status::UnsupportedMediaType => "unsupported media type",
+            Status::UnprocessableEntity => "unprocessable entity",
             Status::TooManyRequests => "too many requests",
             Status::InternalServerError => "internal server error",
+            Status::NotImplemented => "not implemented",
+            Status::BadGateway => "bad gateway",
             Status::ServiceUnavailable => "service unavailable",
+            Status::GatewayTimeout => "gateway timeout",
         }
     }
     pub fn is_success(self) -> bool {
         (200..300).contains(&self.code())
     }
     pub fn is_redirect(self) -> bool {
-        matches!(self, Status::MovedPermanently | Status::Found)
+        matches!(self, Status::MovedPermanently | Status::Found | Status::SeeOther | Status::TemporaryRedirect | Status::PermanentRedirect)
     }
     pub fn is_client_error(self) -> bool {
         (400..500).contains(&self.code())

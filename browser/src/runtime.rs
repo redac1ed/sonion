@@ -1,4 +1,4 @@
-use crate::net::{FetchError, FetchedPage, NetStack, SharedNet};
+use crate::net::{FetchError, FetchedPage, NetStack, OutgoingRequest, SharedNet};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
@@ -8,7 +8,7 @@ pub enum NetCommand {
         reply: oneshot::Sender<Result<FetchedPage, Arc<FetchError>>>
     },
     FetchAsync {
-        url: String,
+        request: OutgoingRequest,
         done: Box<dyn FnOnce(Result<FetchedPage, Arc<FetchError>>) + Send + 'static>
     },
     Reconfigure(NetStack),
@@ -37,10 +37,10 @@ impl NetHandle {
                                 let _ = reply.send(result);
                             });
                         }
-                        NetCommand::FetchAsync {url, done} => {
+                        NetCommand::FetchAsync {request, done} => {
                             let stack = stack.clone();
                             tokio::spawn(async move {
-                                let result = stack.fetch_page(&url).await.map_err(Arc::new);
+                                let result = stack.fetch(request).await.map_err(Arc::new);
                                 done(result);
                             });
                         }
@@ -67,9 +67,12 @@ impl NetHandle {
         }
     }
     pub fn fetch_async<F>(&self, url: &str, done: F) where F: FnOnce(Result<FetchedPage, Arc<FetchError>>) + Send + 'static {
+        self.send_async(OutgoingRequest::get(url), done);
+    }
+    pub fn send_async<F>(&self, request: OutgoingRequest, done: F) where F: FnOnce(Result<FetchedPage, Arc<FetchError>>) + Send + 'static {
         let _ = self.tx.send(NetCommand::FetchAsync {
-            url: url.to_string(),
-            done: Box::new(done) 
+            request,
+            done: Box::new(done)
         });
     }
     pub fn reconfigure(&self, stack: NetStack) {

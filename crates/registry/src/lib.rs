@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sonion_protocol::head::find_header_end;
 use sonion_protocol::{ALPN, Request, Response, Status, limits};
+use sonion_protocol::ratelimit::RateLimiter;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -14,6 +15,8 @@ use tokio::net::TcpListener;
 use tokio::time::{Instant, timeout_at};
 use tokio_rustls::TlsAcceptor;
 use tracing::warn;
+use argon2::Argon2;
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 
 const HEAD_TIMEOUT: Duration = Duration::from_secs(15);
 const BODY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -24,6 +27,12 @@ const LOGIN_MAX_FAILURES: u32 = 5;
 const LOGIN_COOLDOWN_SECS: u64 = 60;
 const MAX_PASSWORD_LEN: usize = 256;
 const MAX_ENDPOINTS: usize = 8;
+const RATE_BURST: u32 = 120;
+const RATE_PER_SEC: f64 = 20.0;
+const ACCOUNT_BURST: u32 = 5;
+const ACCOUNT_PER_SEC: f64 = 5.0 / 3600.0;
+const WRITE_BURST: u32 = 20;
+const WRITES_PER_SEC: f64 = 20.0 / 600.0;
 pub(crate) const CLOCK_SKEW_SECS: u64 = 300;
 
 #[derive(Debug, thiserror::Error)]
@@ -47,6 +56,7 @@ struct Store {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Account {
+    #[serde(default)]
     salt: String,
     password_hash: String
 }
@@ -82,11 +92,30 @@ fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-fn hash_password(salt: &[u8], password: &str) -> String {
+fn hash_password(password: &str) -> Option<String> {
+    let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+    Argon2::default().hash_password(password.as_bytes(), &salt).ok().map(|h| h.to_string())
+}
+
+fn legacy_hash(salt_hex: &str, password: &str) -> Option<String> {
+    let salt = (0..salt_hex.len() / 2)
+        .map(|i| u8::from_str_radix(salt_hex.get(2 * i..2 * i + 2)?, 16).ok())
+        .collect::<Option<Vec<u8>>>()?;
     let mut h = Sha256::new();
-    h.update(salt);
+    h.update(&salt);
     h.update(password.as_bytes());
-    hex(&h.finalize())
+    Some(hex(&h.finalize()))
+}
+
+fn is_legacy(acct: &Account) -> bool {
+    PasswordHash::new(&acct.password_hash).is_err()
+}
+
+fn verify_password(acct: &Account, password: &str) -> bool {
+    match PasswordHash::new(&acct.password_hash) {
+        Ok(parsed) => Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok(),
+        Err(_) => legacy_hash(&acct.salt, password).is_some_and(|h| h == acct.password_hash)
+    }
 }
 
 fn sha256_hex(b: &[u8]) -> String {
@@ -106,7 +135,10 @@ pub struct Registry {
     store: Mutex<Store>,
     signing: SigningKey,
     login_failures: Mutex<HashMap<IpAddr, LoginPenalty>>,
-    tlds: Vec<String>
+    tlds: Vec<String>, 
+    request_limit: RateLimiter,
+    account_limit: RateLimiter,
+    write_limit: RateLimiter
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -152,7 +184,10 @@ impl Registry {
             store: Mutex::new(store),
             signing,
             login_failures: Mutex::new(HashMap::new()),
-            tlds
+            tlds,
+            request_limit: RateLimiter::new(RATE_BURST, RATE_PER_SEC),
+            account_limit: RateLimiter::new(ACCOUNT_BURST, ACCOUNT_PER_SEC),
+            write_limit: RateLimiter::new(WRITE_BURST, WRITES_PER_SEC)
         })
     }
     pub fn verifying_key_b64(&self) -> String {
@@ -181,17 +216,21 @@ impl Registry {
         if !valid_label(&input.username) || input.password.len() < 8 || input.password.len() > MAX_PASSWORD_LEN {
             return (Status::BadRequest, err_json("invalid username or password length"));
         }
+        if self.store.lock().unwrap().accounts.contains_key(&input.username) {
+            return (Status::Conflict, err_json("username already exists"));
+        }
+        let Some(password_hash) = hash_password(&input.password) else {
+            return (Status::InternalServerError, err_json("failed to hash password"));
+        };
         let mut store = self.store.lock().unwrap();
         if store.accounts.contains_key(&input.username) {
             return (Status::Conflict, err_json("username already exists"));
         }
-        let mut salt = [0u8; 16];
-        rand::rngs::OsRng.fill_bytes(&mut salt);
         store.accounts.insert(
             input.username.clone(),
             Account {
-                salt: hex(&salt),
-                password_hash: hash_password(&salt, &input.password),
+                salt: String::new(),
+                password_hash,
             },
         );
         if self.save(&store).is_err() {
@@ -216,23 +255,23 @@ impl Registry {
         let Ok(input) = serde_json::from_slice::<In>(body) else {
             return (Status::BadRequest, err_json("bad json"));
         };
-        let mut store = self.store.lock().unwrap();
-        let Some(acct) = store.accounts.get(&input.username) else {
+        let acct = self.store.lock().unwrap().accounts.get(&input.username).cloned();
+        let Some(acct) = acct else {
             self.record_login_failure(peer);
             return (Status::Unauthorized, err_json("account does not exist"));
         };
-        let Ok(salt) = (0..acct.salt.len() / 2)
-            .map(|i| u8::from_str_radix(&acct.salt[2 * i..2 * i + 2], 16))
-            .collect::<Result<Vec<u8>, _>>()
-        else {
-            return (Status::InternalServerError, err_json("corrupt salt"))
-        };
-        if hash_password(&salt, &input.password) != acct.password_hash {
+        if !verify_password(&acct, &input.password) {
             self.record_login_failure(peer);
             return (Status::Unauthorized, err_json("wrong password"))
         }
         if let Some(ip) = peer {
             self.login_failures.lock().unwrap().remove(&ip);
+        }
+        let upgraded = if is_legacy(&acct) { hash_password(&input.password) } else { None };
+        let mut store = self.store.lock().unwrap();
+        if let (Some(hash), Some(stored)) = (upgraded, store.accounts.get_mut(&input.username)) {
+            stored.password_hash = hash;
+            stored.salt.clear();
         }
         let mut key = [0u8; 32];
         rand::rngs::OsRng.fill_bytes(&mut key);
@@ -400,7 +439,22 @@ impl Registry {
             None => (Status::NotFound, err_json("no such domain"))
         }
     }
+    fn rate_limited(&self, req: &Request, ip: IpAddr) -> Result<(), Duration> {
+        self.request_limit.try_acquire(ip)?;
+        match (req.method.as_str(), req.path.as_str()) {
+            ("POST", "/v1/accounts") => self.account_limit.try_acquire(ip),
+            ("PUT" | "DELETE", p) if p.starts_with("/v1/domains/") => self.write_limit.try_acquire(ip),
+            _ => Ok(())
+        }
+    }
     fn route(&self, req: &Request, peer: Option<IpAddr>) -> Response {
+        if let Some(Err(wait)) = peer.map(|ip| self.rate_limited(req, ip)) {
+            let mut resp = Response::new(Status::TooManyRequests, err_json("too many requests, slow down").into_bytes());
+            resp.set_header("Content-Type", "application/json");
+            resp.set_header("Retry-After", wait.as_secs().to_string());
+            resp.set_header("Connection", "close");
+            return resp;
+        }
         let (status, body) = match (req.method.as_str(), req.path.as_str()) {
             ("POST", "/v1/accounts") => self.create_account(&req.body),
             ("POST", "/v1/login") => self.login(&req.body, peer),

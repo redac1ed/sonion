@@ -76,6 +76,8 @@ enum Cmd {
         key: PathBuf,
         #[arg(long, default_value_t = SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)))]
         addr: SocketAddr,
+        #[arg(long)]
+        proxy: Option<String>
     },
     Fetch {
         url: String,
@@ -100,6 +102,8 @@ enum Cmd {
         key: PathBuf,
         #[arg(long, default_value_t = SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT)))]
         addr: SocketAddr,
+        #[arg(long)]
+        proxy: Option<String>
     },
     Registry {
         #[arg(long, default_value = "./registry-data")]
@@ -189,10 +193,10 @@ async fn main() -> Result<()> {
         .init();
     match Cli::parse().cmd {
         Cmd::Cert { host, out } => cmd_cert(host, out),
-        Cmd::Serve {root, cert, key, addr} => cmd_serve(root, cert, key, addr).await,
+        Cmd::Serve {root, cert, key, addr, proxy} => cmd_serve(root, cert, key, addr, proxy).await,
         Cmd::Fetch {url, insecure_dev, head, registry, pin_key} => cmd_fetch(&url, insecure_dev, head, registry, pin_key).await,
         Cmd::New { name } => cmd_new(&name),
-        Cmd::Dev {root, cert, key, addr} => cmd_dev(root, cert, key, addr).await,
+        Cmd::Dev {root, cert, key, addr, proxy} => cmd_dev(root, cert, key, addr, proxy).await,
         Cmd::Registry {data_dir, cert, key, addr} => cmd_registry(data_dir, cert, key, addr).await,
         Cmd::Register {registry, username, password, insecure_dev} => cmd_register(registry, &username, &password, insecure_dev).await,
         Cmd::Login {registry, username, password, insecure_dev} => cmd_login(registry, &username, &password, insecure_dev).await,
@@ -218,11 +222,14 @@ fn cmd_cert(hosts: Vec<String>, out: PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_serve(root: PathBuf, cert: PathBuf, key: PathBuf, addr: SocketAddr) -> Result<()> {
+async fn cmd_serve(root: PathBuf, cert: PathBuf, key: PathBuf, addr: SocketAddr, proxy: Option<String>) -> Result<()> {
     let (certs, key) = load_pem_identity(&cert, &key)?;
-    let server = Server::bind(addr, &root, certs, key).await?;
+    let mut server = Server::bind(addr, &root, certs, key).await?;
+    if let Some(upstream) = &proxy {
+        server = server.with_proxy(upstream);
+    }
     let bound = server.local_addr()?;
-    tracing::info!(%bound, root = %root.display(), "serving sonion://");
+    tracing::info!(%bound, root = %root.display(), proxy = ?proxy, "serving sonion://");
     server.run().await?;
     Ok(())
 }
@@ -337,7 +344,7 @@ fn cmd_new(name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_dev(root: PathBuf, cert: PathBuf, key: PathBuf, addr: SocketAddr) -> Result<()> {
+async fn cmd_dev(root: PathBuf, cert: PathBuf, key: PathBuf, addr: SocketAddr, proxy: Option<String>) -> Result<()> {
     let root = root.canonicalize().context("bad --root")?;
     let entry = ["src/main.tsx", "src/main.jsx", "src/main.ts", "src/main.js"].iter()
         .map(|p| root.join(p)).find(|p| p.exists());
@@ -377,8 +384,11 @@ async fn cmd_dev(root: PathBuf, cert: PathBuf, key: PathBuf, addr: SocketAddr) -
         (Some(_), None) => warn!("no src/main.{{jsx,tsx,ts,js}} found — serving static only"),
     }
     let (certs, key) = load_pem_identity(&cert, &key)?;
-    let server = Server::bind(addr, &root, certs, key).await?;
-    info!(addr = %server.local_addr()?, root = %root.display(), "dev server up");
+    let mut server = Server::bind(addr, &root, certs, key).await?;
+    if let Some(upstream) = &proxy {
+        server = server.with_proxy(upstream);
+    }
+    info!(addr = %server.local_addr()?, root = %root.display(), proxy = ?proxy, "dev server up");
     server.run().await?;
     Ok(())
 }

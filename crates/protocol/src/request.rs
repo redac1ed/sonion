@@ -3,6 +3,8 @@ use crate::{
     limits, ProtocolError,
 };
 
+pub const METHODS: &[&str] = &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
     pub method: String,
@@ -12,6 +14,14 @@ pub struct Request {
 }
 
 impl Request {
+    pub fn new(method: &str, path: &str) -> Self {
+        Self {
+            method: method.into(),
+            path: path.into(),
+            headers: Vec::new(),
+            body: Vec::new()
+        }
+    }
     pub fn get(path: &str) -> Self {
         Self {
             method: "GET".into(),
@@ -111,9 +121,8 @@ impl Request {
                 "bad version: {version}"
             )));
         }
-        match method {
-            "GET" | "HEAD" | "POST" | "PUT" | "DELETE" => {}
-            other => return Err(ProtocolError::MalformedLine(format!("bad method: {other}"))),
+        if !METHODS.contains(&method) {
+            return Err(ProtocolError::MalformedLine(format!("bad method: {method}")));
         }
         if !path.starts_with('/') {
             return Err(ProtocolError::MalformedLine(format!(

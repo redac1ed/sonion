@@ -25,3 +25,4 @@ rand = "0.8"
 base64 = "0.22"
 wry = {version = "0.53", features = ["devtools"]}
 tao = "0.34"
+argon2 = "0.5"

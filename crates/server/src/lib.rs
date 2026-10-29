@@ -1,8 +1,9 @@
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sonion_protocol::date::{format_http_date, parse_http_date};
 use sonion_protocol::head::find_header_end;
+use sonion_protocol::ratelimit::RateLimiter;
 use sonion_protocol::{ALPN, ProtocolError, Request, Response, Status, limits, system_time_to_unix};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,12 +13,17 @@ use tokio::time::{Instant, timeout_at};
 use tokio_rustls::TlsAcceptor;
 use tracing::{info, warn};
 
+mod proxy;
+
 const HEAD_TIMEOUT: Duration = Duration::from_secs(15);
 const BODY_TIMEOUT: Duration = Duration::from_secs(60);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 const CHUNK_THRESHOLD: usize = 256 * 1024;
 const CHUNK_SIZE: usize = 16 * 1024;
 const MAX_KEEPALIVE_REQUESTS: usize = 1000;
+const RATE_BURST: u32 = 200;
+const RATE_PER_SEC: f64 = 50.0;
+const STATIC_ALLOW: &str = "GET, HEAD, OPTIONS";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
@@ -31,6 +37,14 @@ pub struct Server {
     root: PathBuf,
     acceptor: TlsAcceptor,
     listener: TcpListener,
+    proxy: Option<String>,
+    limiter: RateLimiter,
+}
+
+struct Site {
+    root: PathBuf, 
+    proxy: Option<String>, 
+    limiter: RateLimiter,
 }
 
 impl Server {
@@ -52,19 +66,36 @@ impl Server {
             root,
             acceptor: TlsAcceptor::from(Arc::new(config)),
             listener,
+            proxy: None,
+            limiter: RateLimiter::new(RATE_BURST, RATE_PER_SEC)
         })
+    }
+    pub fn with_proxy(mut self, upstream: impl Into<String>) -> Self {
+        self.proxy = Some(upstream.into());
+        self
+    }
+    pub fn with_rate_limit(mut self, burst: u32, per_sec: f64) -> Self {
+        self.limiter = RateLimiter::new(burst, per_sec);
+        self
     }
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         self.listener.local_addr()
     }
     pub async fn run(self) -> Result<(), ServerError> {
-        let root = Arc::new(self.root);
+        let site = Arc::new(Site {
+            root: self.root,
+            proxy: self.proxy,
+            limiter: self.limiter,
+        });
         loop {
             let (tcp, peer) = self.listener.accept().await?;
+            if site.limiter.try_acquire(peer.ip()).is_err() {
+                continue;
+            }
             let acceptor = self.acceptor.clone();
-            let root = root.clone();
+            let site = site.clone();
             tokio::spawn(async move {
-                if let Err(e) = handle_conn(acceptor, tcp, &root).await {
+                if let Err(e) = handle_conn(acceptor, tcp, &site, peer.ip()).await {
                     warn!(%peer, error = %e, "connection error");
                 }
             });
@@ -75,8 +106,10 @@ impl Server {
 async fn handle_conn(
     acceptor: TlsAcceptor,
     tcp: tokio::net::TcpStream,
-    root: &Path,
+    site: &Site,
+    peer: IpAddr,
 ) -> anyhow::Result<()> {
+    let root = site.root.as_path();
     let mut tls = tokio::time::timeout(HEAD_TIMEOUT, acceptor.accept(tcp)).await??;
     match tls.get_ref().1.alpn_protocol() {
         Some(p) if p == ALPN.as_bytes() => {}
@@ -107,14 +140,32 @@ async fn handle_conn(
         let started = Instant::now();
         let client_close = served >= MAX_KEEPALIVE_REQUESTS || request.get_header("Connection")
             .map(|v| v.eq_ignore_ascii_case("close")).unwrap_or(false);
-        if request.method != "GET" && request.method != "HEAD" {
-            let mut resp = error_page(root, Status::MethodNotAllowed, b"method not allowed").await;
-            resp.set_header("Allow", "GET, HEAD");
-            write_response(&mut tls, &request, resp, true).await?;
-            info!(method = %request.method, path = %request.path, status = 405, elapsed_us = &started.elapsed().as_micros(), "response");
-            return Ok(());
+        if let Err(wait) = site.limiter.try_acquire(peer) {
+            let mut resp = simple(Status::TooManyRequests, b"too many requests");
+            resp.set_header("Retry-After", wait.as_secs().to_string());
+            write_response(&mut tls, &request, resp, client_close).await?;
+            info!(method = %request.method, path = %request.path, status = 429, "response");
+            if client_close {
+                return Ok(());
+            }
+            continue;
         }
-        let response = build_response(root, &request).await;
+        let response = match (&site.proxy, request.method.as_str()) {
+            (Some(upstream), _) => proxy::forward(upstream, &request, peer).await,
+            (None, "GET" | "HEAD") => build_response(root, &request).await,
+            (None, "OPTIONS") => {
+                let mut resp = Response::new(Status::NoContent, Vec::new());
+                resp.set_header("Allow", STATIC_ALLOW);
+                resp
+            }
+            (None, _) => {
+                let mut resp = error_page(root, Status::MethodNotAllowed, b"method not allowed").await;
+                resp.set_header("Allow", STATIC_ALLOW);
+                write_response(&mut tls, &request, resp, true).await?;
+                info!(method = %request.method, path = %request.path, status = 405, elapsed_us = &started.elapsed().as_micros(), "response");
+                return Ok(());
+            }
+        };
         let status = response.status.code();
         let bytes = response.body.len();
         write_response(&mut tls, &request, response, client_close).await?;
@@ -217,7 +268,7 @@ async fn write_response<S: AsyncWriteExt + Unpin>(
     if closing {
         response.set_header("Connection", "close");
     }
-    let head_only = request.method == "HEAD" || response.status == Status::NotModified;
+    let head_only = request.method == "HEAD" || matches!(response.status, Status::NotModified | Status::NoContent);
     let wire = if head_only {
         response.serialize_head()
     } else if response.body.len() > CHUNK_THRESHOLD {
