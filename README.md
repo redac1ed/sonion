@@ -37,7 +37,7 @@ Note: for a server, run it on localhost and add `--proxy 127.0.0.1:3000` to `ser
 
 ## Documentation
 
-Everything else (dev server, React starter, running your own registry, config) is in the [docs](<docs link>).
+For more information about how to run your site, check out the [docs](https://sonion.redac.me/docs).
 
 ## License
 
