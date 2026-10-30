@@ -18,6 +18,7 @@ thiserror.workspace = true
 rustls.workspace = true
 sonion-server.workspace = true
 mime_guess.workspace = true 
+rust-embed = "8"
 
 [dev-dependencies]
 tempfile.workspace = true

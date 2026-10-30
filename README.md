@@ -32,7 +32,15 @@ irm https://raw.githubusercontent.com/redac1ed/sonion/main/install.ps1 | iex
 
 ### Sonion Browser
 
-TBD
+Go over to the [latest release page](https://github.com/redac1ed/sonion/releases/latest) and select the build according to your OS: 
+
+- **Windows**: `sonion-browser-x86_64-pc-windows-msvc.zip`.
+- **MacOS**:  `sonion-browser-aarch64-apple-darwin.zip` (Apple Silicon) or `x86_64` (Intel).
+- **Linux**: `sonion-browser-x86_64-unknown-linux-gnu.tar.gz`. 
+
+Just unzip the download and open the respective build.
+
+Note: The Linux build needs WebKitGTK, install by `sudo apt install libwebkit2gtk-4.1-0`. 
 
 ## Host A Site
 

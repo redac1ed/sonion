@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use sonion_protocol::SonionUrl;
 use tao::{event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy}, window::{Window, WindowBuilder}};
 use wry::{WebContext, WebViewBuilder, WebView};
@@ -157,6 +159,8 @@ fn spawn_tab_webview(window: &Window, web_context: &mut WebContext, net: NetHand
 }
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    linux_env_defaults();
     tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();
     let settings = registry::settings::Settings::load_or_create().map_err(|e| anyhow::anyhow!("loading config {}: {e}", registry::settings::Settings::path().display()))?;
     let registry_str = std::env::var("SONION_REGISTRY").unwrap_or_else(|_| settings.registry.clone());
@@ -183,12 +187,11 @@ fn main() -> anyhow::Result<()> {
         chrome_height: INITIAL_CHROME_HEIGHT,
         overlay: false
     }));
-    let ui_dist_dir = ui_dist_path();
     let proxy_for_ipc = proxy.clone();
     let bar = WebViewBuilder::new_with_web_context(&mut web_context.borrow_mut())
         .with_initialization_script(format!("window.__SONION_SETTINGS__ = {}; window.__SONION_PROFILE__ = {};", settings_to_ui(&settings), load_profile()))
         .with_custom_protocol("sonion-nav".into(), move |_wv, request| {
-            serve_ui_asset(&ui_dist_dir, request.uri().path())
+            serve_ui_asset(request.uri().path())
         })
         .with_ipc_handler(move |req| {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(req.body()) {
@@ -490,29 +493,29 @@ fn main() -> anyhow::Result<()> {
     });
 }
 
-fn ui_dist_path() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir.join("ui").join("dist")
-}
+#[derive(rust_embed::RustEmbed)]
+#[folder = "ui/dist/"]
+#[allow_missing = true]
+struct UiAssets;
 
-fn serve_ui_asset(dist_dir: &std::path::Path, raw_path: &str) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
+fn serve_ui_asset(raw_path: &str) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
     let clean = raw_path.trim_start_matches('/');
     let rel = if clean.is_empty() {"index.html"} else {clean};
-    let file_path = dist_dir.join(rel);
-    if let Ok(bytes) = std::fs::read(&file_path) {
-        let mime = mime_guess::from_path(&file_path).first_or_octet_stream().to_string();
-        return wry::http::Response::builder().status(200)
-            .header("Content-Type", mime)
-            .body(std::borrow::Cow::Owned(bytes)).unwrap();
-    }
-    if let Ok(bytes) = std::fs::read(dist_dir.join("index.html")) {
-        return wry::http::Response::builder().status(200)
-            .header("Content-Type", "text/html; charset=utf-8")
-            .body(std::borrow::Cow::Owned(bytes)).unwrap();
-    }
-    wry::http::Response::builder().status(500)
-        .header("Content-Type", "text/plain")
-        .body(std::borrow::Cow::Borrowed(b"UI not built, run `npm install && npm run build` inside browser/ui".as_slice())).unwrap()
+    let (path, file) = match UiAssets::get(rel) {
+        Some(file) => (rel, file),
+        None => match UiAssets::get("index.html") {
+            Some(file) => ("index.html", file),
+            None => {
+                return wry::http::Response::builder().status(500)
+                    .header("Content-Type", "text/plain")
+                    .body(std::borrow::Cow::Borrowed(b"UI not built, run `npm install && npm run build` inside browser/ui".as_slice())).unwrap();
+            }
+        }
+    };
+    let mime = mime_guess::from_path(path).first_or_octet_stream().to_string();
+    wry::http::Response::builder().status(200)
+        .header("Content-Type", mime)
+        .body(file.data).unwrap()
 }
 
 fn page_response(page: FetchedPage) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
@@ -773,4 +776,14 @@ fn from_webview_url(url: &str) -> Option<String> {
 #[cfg(not(target_os = "windows"))]
 fn open_path(path: &str) -> std::io::Result<()> {
     open_in_default_browser(path)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_env_defaults() {
+    if std::env::var_os("GDK_BACKEND").is_none() {
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
 }

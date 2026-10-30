@@ -55,8 +55,88 @@ jobs:
           name: sonion-${{ matrix.target }}
           path: sonion-${{ matrix.target }}.*
 
+    browser:
+      strategy:
+        fail-fast: false
+        matrix:
+          include:
+            - target: x86_64-pc-windows-msvc
+              os: windows-latest
+            - target: x86_64-unknown-linux-gnu
+              os: ubuntu-22.04
+            - target: aarch64-apple-darwin
+              os: macos-latest
+            - target: x86_64-apple-darwin
+              os: macos-latest
+      runs-on: ${{ matrix.os }}
+      steps:
+        - uses: actions/checkout@v7
+        - uses: actions/setup-node@v7
+          with:
+            node-version: 22
+            cache: npm
+            cache-dependency-path: browser/ui/package-lock.json
+        - name: build ui
+          working-directory: browser/ui
+          run: |
+            npm ci
+            npm run build
+        - name: linux deps
+          if: runner.os == 'Linux'
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev
+        - uses: dtolnay/rust-toolchain@stable
+          with:
+            targets: ${{ matrix.target }}
+        - uses: Swatinem/rust-cache@v2
+          with:
+            key: browser-${{ matrix.target }}
+        - name: build
+          run: cargo build --release --locked -p sonion-browser --target ${{ matrix.target }}
+        - name: package (windows)
+          if: runner.os == 'Windows'
+          shell: pwsh
+          run: |
+            $name = "sonion-browser-${{ matrix.target }}"
+            Compress-Archive -Path target/${{ matrix.target }}/release/sonion-browser.exe -DestinationPath "$name.zip"
+            $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
+            "$hash  $name.zip" | Out-File -Encoding ascii "$name.zip.sha256"
+        - name: package (linux)
+          if: runner.os == 'Linux'
+          run: |
+            name=sonion-browser-${{ matrix.target }}
+            tar -czf $name.tar.gz -C target/${{ matrix.target }}/release sonion-browser
+            sha256sum $name.tar.gz > $name.tar.gz.sha256
+        - name: package (macos)
+          if: runner.os == 'macOS'
+          run: |
+            name=sonion-browser-${{ matrix.target }}
+            app=Sonion.app
+            mkdir -p $app/Contents/MacOS
+            cp target/${{ matrix.target }}/release/sonion-browser $app/Contents/MacOS/
+            cat > $app/Contents/Info.plist <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0"><dict>
+              <key>CFBundleName</key><string>Sonion</string>
+              <key>CFBundleIdentifier</key><string>me.redac.sonion</string>
+              <key>CFBundleExecutable</key><string>sonion-browser</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleShortVersionString</key><string>${GITHUB_REF_NAME#v}</string>
+              <key>NSHighResolutionCapable</key><true/>
+            </dict></plist>
+            EOF
+            codesign --force --deep --sign - $app
+            ditto -c -k --keepParent $app $name.zip
+            shasum -a 256 $name.zip > $name.zip.sha256
+        - uses: actions/upload-artifact@v7
+          with:
+            name: sonion-browser-${{ matrix.target }}
+            path: sonion-browser-${{ matrix.target }}.*
+
   release:
-    needs: build
+    needs: [build, browser]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
