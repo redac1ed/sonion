@@ -12,9 +12,25 @@ Heavily inspired by [gurted.com](https://gurted.com).
 - **a server**, which serves a folder or sits in front of your own app with `--proxy` (for apps like forums, APIs etc.)
 - **a registry**, just grab a domain and point it at your server.
 - **a browser**, with tabs, history, bookmarks, downloads, devtools and the normal stuff.
-- **a cli**, with`sonion` command for all of the above.
+- **a cli**, with `sonion` command for all of the above.
 
-## How To Run 
+## How To Install
+
+### `sonion` CLI: 
+
+To install the CLI on your computer, run: 
+
+1. For Linux/MacOS:
+```sh
+curl -fsSL https://raw.githubusercontent.com/redac1ed/sonion/main/install.sh | sh
+```
+
+2. For Windows: 
+```powershell
+irm https://raw.githubusercontent.com/redac1ed/sonion/main/install.ps1 | iex
+```
+
+### Sonion Browser
 
 TBD
 
@@ -33,7 +49,7 @@ sonion put-domain yourdomain.son --api-key <key> --endpoints <your ip>:6767
 
 After that, navigate to `sonion://yourdomain.son`.
 
-Note: for a server, run it on localhost and add `--proxy 127.0.0.1:3000` to `serve`.
+Note: for a backend (e.g. an API, forum), run it on localhost and add `--proxy 127.0.0.1:3000` to `serve`.
 
 ## Documentation
 
