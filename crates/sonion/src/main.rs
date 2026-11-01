@@ -171,7 +171,9 @@ enum Cmd {
         #[arg(long)]
         ttl: Option<u64>,
         #[arg(long)]
-        insecure_dev: bool
+        insecure_dev: bool,
+        #[arg(long)]
+        cert: Option<PathBuf>,
     },
     DeleteDomain {
         name: String,
@@ -181,6 +183,9 @@ enum Cmd {
         api_key: String,
         #[arg(long)]
         insecure_dev: bool
+    },
+    Fingerprint {
+        cert: PathBuf,
     }
 }
 
@@ -203,7 +208,8 @@ async fn main() -> Result<()> {
         Cmd::Logout {registry, api_key, insecure_dev} => cmd_logout(registry, &api_key, insecure_dev).await,
         Cmd::Resolve {name, registry, pin_key, insecure_dev} => cmd_resolve(&name, registry, pin_key, insecure_dev).await,
         Cmd::Domains {registry, api_key, insecure_dev} => cmd_domains(registry, &api_key, insecure_dev).await,
-        Cmd::PutDomain {name, registry, api_key, endpoints, ttl, insecure_dev} => cmd_put_domain(&name, registry, &api_key, endpoints, ttl, insecure_dev).await,
+        Cmd::Fingerprint { cert } => cmd_fingerprint(&cert),
+        Cmd::PutDomain {name, registry, api_key, endpoints, ttl, cert, insecure_dev} => cmd_put_domain(&name, registry, &api_key, endpoints, ttl, cert, insecure_dev).await,
         Cmd::DeleteDomain {name, registry, api_key, insecure_dev} => cmd_delete_domain(&name, registry, &api_key, insecure_dev).await
     }
 }
@@ -219,7 +225,25 @@ fn cmd_cert(hosts: Vec<String>, out: PathBuf) -> Result<()> {
     std::fs::write(&key_path, key_pair.serialize_pem())?;
     println!("wrote {}", cert_path.display());
     println!("wrote {}", key_path.display());
+    println!("fingerprint {}", sonion_protocol::cert_fingerprint(cert.der()));
     Ok(())
+}
+
+fn cmd_fingerprint(cert: &PathBuf) -> Result<()> {
+    println!("{}", pem_fingerprint(cert)?);
+    Ok(())
+}
+
+fn pem_fingerprint(path: &PathBuf) -> Result<String> {
+    let pem = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let b64: String = pem.lines()
+        .skip_while(|l| !l.contains("-----BEGIN CERTIFICATE-----"))
+        .skip(1)
+        .take_while(|l| !l.contains("-----END CERTIFICATE-----"))
+        .collect();
+    anyhow::ensure!(!b64.is_empty(), "no certificate in {}", path.display());
+    let der = base64_decode(&b64).map_err(|e| anyhow::anyhow!("bad certificate in {}: {e}", path.display()))?;
+    Ok(sonion_protocol::cert_fingerprint(&der))
 }
 
 async fn cmd_serve(root: PathBuf, cert: PathBuf, key: PathBuf, addr: SocketAddr, proxy: Option<String>) -> Result<()> {
@@ -475,11 +499,12 @@ async fn cmd_domains(registry: Option<String>, api_key: &str, insecure_dev: bool
     Ok(())
 }
 
-async fn cmd_put_domain(name: &str, registry: Option<String>, api_key: &str, endpoints: Vec<String>, ttl: Option<u64>, insecure_dev: bool) -> Result<()> {
+async fn cmd_put_domain(name: &str, registry: Option<String>, api_key: &str, endpoints: Vec<String>, ttl: Option<u64>, cert: Option<PathBuf>, insecure_dev: bool) -> Result<()> {
     anyhow::ensure!(!endpoints.is_empty(), "pass atleast one --endpoints host:port");
+    let pin = cert.as_ref().map(pem_fingerprint).transpose()?;
     let registry = resolve_registry(registry)?;
     let client = registry_client(&registry, insecure_dev)?;
-    let expires = client.put_domain(api_key, name, &endpoints, ttl).await.context("put domain failed")?;
+    let expires = client.put_domain_pinned(api_key, name, &endpoints, ttl, pin.as_deref()).await.context("put domain failed")?;
     println!("{name} registered, expires_at={expires}");
     Ok(())
 }

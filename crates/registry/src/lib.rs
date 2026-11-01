@@ -33,6 +33,11 @@ const ACCOUNT_BURST: u32 = 5;
 const ACCOUNT_PER_SEC: f64 = 5.0 / 3600.0;
 const WRITE_BURST: u32 = 20;
 const WRITES_PER_SEC: f64 = 20.0 / 600.0;
+const MAX_DESCRIPTION_LEN: usize = 140;
+const MAX_SITES: usize = 5000;
+const DEFAULT_TLDS: &str = include_str!("../../../tlds.json");
+const DOMAINS_PAGE: &str = include_str!("domains.html");
+const DOMAINS_PAGE_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 pub(crate) const CLOCK_SKEW_SECS: u64 = 300;
 
 #[derive(Debug, thiserror::Error)]
@@ -66,7 +71,21 @@ struct Domain {
     owner: String,
     endpoints: Vec<String>,
     expires_at: u64,
-    ttl: u64
+    ttl: u64,
+    #[serde(default)]
+    cert_sha256: Option<String>,
+    #[serde(default)]
+    description: String,
+    #[serde(default = "default_listed")]
+    listed: bool,
+    #[serde(default)]
+    created_at: u64,
+    #[serde(default)]
+    updated_at: u64
+}
+
+fn default_listed() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,11 +96,25 @@ pub struct ResolveRecord {
     pub ttl: u64,
     pub key: String,
     pub signature: String,
-    pub not_before: u64
+    pub not_before: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert_sha256: Option<String>
 }
 
-fn canonical_resolve(name: &str, endpoints: &[String], expires_at: u64, ttl: u64, not_before: u64) -> Vec<u8> {
-    format!("{name}|{}|{expires_at}|{not_before}|{ttl}", endpoints.join(",")).into_bytes()
+fn canonical_resolve(name: &str, endpoints: &[String], expires_at: u64, ttl: u64, not_before: u64, cert_sha256: Option<&str>) -> Vec<u8> {
+    let base = format!("{name}|{}|{expires_at}|{not_before}|{ttl}", endpoints.join(","));
+    match cert_sha256 {
+        Some(pin) => format!("{base}|{pin}").into_bytes(),
+        None => base.into_bytes()
+    }
+}
+
+fn valid_fingerprint(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn valid_description(s: &str) -> bool {
+    s.chars().count() <= MAX_DESCRIPTION_LEN && !s.chars().any(char::is_control)
 }
 
 fn now() -> u64 {
@@ -318,7 +351,10 @@ impl Registry {
         #[derive(Deserialize)]
         struct In {
             endpoints: Vec<String>,
-            ttl: Option<u64>
+            ttl: Option<u64>,
+            cert_sha256: Option<String>,
+            description: Option<String>,
+            listed: Option<bool>
         }
         let Ok(input) = serde_json::from_slice::<In>(&req.body) else {
             return (Status::BadRequest, err_json("bad json"));
@@ -329,7 +365,12 @@ impl Registry {
         if input.endpoints.len() > MAX_ENDPOINTS || input.endpoints.iter().any(|e| !valid_endpoint(e)) {
             return (Status::BadRequest, err_json("invalid endpoints"));
         }
-        let ttl = input.ttl.unwrap_or(DEFAULT_TTL_SECS).clamp(1, MAX_TTL_SECS);
+        if input.cert_sha256.as_deref().is_some_and(|c| !c.is_empty() && !valid_fingerprint(c)) {
+            return (Status::BadRequest, err_json("cert fingerprint must be 64 lowercase hex characters"));
+        }
+        if input.description.as_deref().is_some_and(|d| !valid_description(d)) {
+            return (Status::BadRequest, err_json("description must be one line of at most 140 characters"));
+        }
         let mut store = self.store.lock().unwrap();
         let Some(user) = self.authed_user(&store, req) else {
             return (Status::Unauthorized, err_json("auth required"));
@@ -340,19 +381,29 @@ impl Registry {
             }
             _ => {}
         }
-        store.domains.insert(
-            name.to_string(),
-            Domain {
-                owner: user, 
-                endpoints: input.endpoints,
-                expires_at: now() + DOMAIN_TTL_SECS,
-                ttl
+        let at = now();
+        let expires_at = at + DOMAIN_TTL_SECS;
+        let prev = store.domains.get(name).filter(|d| d.owner == user).cloned();
+        let domain = Domain {
+            owner: user,
+            endpoints: input.endpoints,
+            expires_at,
+            ttl: input.ttl.or(prev.as_ref().map(|d| d.ttl)).unwrap_or(DEFAULT_TTL_SECS).clamp(1, MAX_TTL_SECS),
+            cert_sha256: match input.cert_sha256 {
+                Some(c) if c.is_empty() => None,
+                Some(c) => Some(c),
+                None => prev.as_ref().and_then(|d| d.cert_sha256.clone())
             },
-        );
+            description: input.description.or(prev.as_ref().map(|d| d.description.clone())).unwrap_or_default(),
+            listed: input.listed.or(prev.as_ref().map(|d| d.listed)).unwrap_or(true),
+            created_at: prev.as_ref().map_or(at, |d| d.created_at),
+            updated_at: at
+        };
+        store.domains.insert(name.to_string(), domain);
         if self.save(&store).is_err() {
             return (Status::InternalServerError, err_json("save failed"));
         }
-        (Status::Ok, format!(r#"{{"ok":true,"expires_at":{}}}"#, now() + DOMAIN_TTL_SECS))
+        (Status::Ok, format!(r#"{{"ok":true,"expires_at":{expires_at}}}"#))
     }
     fn get_domain(&self, req: &Request, name: &str) -> (Status, String) {
         let store = self.store.lock().unwrap();
@@ -373,7 +424,10 @@ impl Registry {
                 "endpoints": d.endpoints,
                 "expires_at": d.expires_at,
                 "ttl": d.ttl,
-                "expired": d.expires_at <= now()
+                "expired": d.expires_at <= now(),
+                "cert_sha256": d.cert_sha256,
+                "description": d.description,
+                "listed": d.listed,
             }))
             .unwrap()
         )
@@ -408,11 +462,49 @@ impl Registry {
                     "endpoints": d.endpoints,
                     "expires_at": d.expires_at,
                     "ttl": d.ttl,
-                    "expired": d.expires_at <= now()
+                    "expired": d.expires_at <= now(),
+                    "cert_sha256": d.cert_sha256,
+                    "description": d.description,
+                    "listed": d.listed,
                 })
             })
             .collect();
         (Status::Ok, serde_json::to_string(&serde_json::json!({"domains": mine})).unwrap())
+    }
+    fn whois(&self, name: &str) -> (Status, String) {
+        if !valid_name(name, &self.tlds) {
+            return (Status::BadRequest, err_json("invalid domain or tld"));
+        }
+        let store = self.store.lock().unwrap();
+        let body = match store.domains.get(name).filter(|d| d.expires_at > now()) {
+            Some(d) => serde_json::json!({
+                "name": name,
+                "registered": true,
+                "owner": d.owner,
+                "endpoints": d.endpoints,
+                "ttl": d.ttl,
+                "cert_sha256": d.cert_sha256,
+                "description": d.description,
+                "created_at": d.created_at,
+                "updated_at": d.updated_at,
+                "expires_at": d.expires_at
+            }),
+            None => serde_json::json!({"name": name, "registered": false})
+        };
+        (Status::Ok, body.to_string())
+    }
+    fn list_sites(&self) -> (Status, String) {
+        let store = self.store.lock().unwrap();
+        let at = now();
+        let mut sites: Vec<(&String, &Domain)> = store.domains.iter()
+            .filter(|(_, d)| d.listed && d.expires_at > at)
+            .collect();
+        sites.sort_by(|a, b| a.0.cmp(b.0));
+        sites.truncate(MAX_SITES);
+        let sites: Vec<serde_json::Value> = sites.into_iter()
+            .map(|(name, d)| serde_json::json!({"name": name, "description": d.description}))
+            .collect();
+        (Status::Ok, serde_json::json!({"sites": sites}).to_string())
     }
     pub fn resolve_record(&self, name: &str) -> Option<ResolveRecord> {
         let store = self.store.lock().unwrap();
@@ -421,7 +513,7 @@ impl Registry {
         if d.expires_at <= at {
             return None;
         }
-        let msg = canonical_resolve(name, &d.endpoints, d.expires_at, d.ttl, at);
+        let msg = canonical_resolve(name, &d.endpoints, d.expires_at, d.ttl, at, d.cert_sha256.as_deref());
         let sig: Signature = self.signing.sign(&msg);
         Some(ResolveRecord {
             name: name.to_string(),
@@ -430,7 +522,8 @@ impl Registry {
             not_before: at,
             ttl: d.ttl,
             key: self.verifying_key_b64(),
-            signature: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, sig.to_bytes())
+            signature: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, sig.to_bytes()),
+            cert_sha256: d.cert_sha256.clone()
         })
     }
     fn resolve(&self, name: &str) -> (Status, String) {
@@ -452,6 +545,14 @@ impl Registry {
             let mut resp = Response::new(Status::TooManyRequests, err_json("too many requests, slow down").into_bytes());
             resp.set_header("Content-Type", "application/json");
             resp.set_header("Retry-After", wait.as_secs().to_string());
+            resp.set_header("Connection", "close");
+            return resp;
+        }
+        if req.method == "GET" && req.path == "/" {
+            let mut resp = Response::new(Status::Ok, DOMAINS_PAGE.as_bytes().to_vec());
+            resp.set_header("Content-Type", "text/html; charset=utf-8");
+            resp.set_header("Content-Security-Policy", DOMAINS_PAGE_CSP);
+            resp.set_header("X-Content-Type-Options", "nosniff");
             resp.set_header("Connection", "close");
             return resp;
         }
@@ -477,6 +578,10 @@ impl Registry {
                 format!(r#"{{"key":"{}"}}"#, self.verifying_key_b64()),
             ),
             ("GET", "/v1/tlds") => self.list_tlds(),
+            ("GET", "/v1/sites") => self.list_sites(),
+            ("GET", p) if p.starts_with("/v1/whois/") => {
+                self.whois(&p["/v1/whois/".len()..])
+            }
             _ => (Status::NotFound, err_json("unknown endpoint")),
         };
         let mut resp = Response::new(status, body.into_bytes());
@@ -495,12 +600,11 @@ impl Registry {
         removed
     }
     fn load_tlds() -> Vec<String> {
-        let path = std::env::var("SONION_TLDS").map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tlds.json")
-            });
-        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("tld config {} missing: {e}", path.display()));
-        let mut tlds: Vec<String> = serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("tld config {} invalid: {e}", path.display()));
+        let raw = match std::env::var("SONION_TLDS") {
+            Ok(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("tld config {path} missing: {e}")),
+            Err(_) => DEFAULT_TLDS.to_string()
+        };
+        let mut tlds: Vec<String> = serde_json::from_str(&raw).unwrap_or_else(|e| panic!("tld config invalid: {e}"));
         tlds.retain(|t| valid_tld(t));
         tlds.sort();
         tlds.dedup();
@@ -577,7 +681,7 @@ pub fn verify_record(rec: &ResolveRecord, at_unix: u64) -> bool {
     let Ok(vk) = VerifyingKey::from_bytes(&key_arr) else {
         return false;
     };
-    let msg = canonical_resolve(&rec.name, &rec.endpoints, rec.expires_at, rec.ttl, rec.not_before);
+    let msg = canonical_resolve(&rec.name, &rec.endpoints, rec.expires_at, rec.ttl, rec.not_before, rec.cert_sha256.as_deref());
     vk.verify_strict(&msg, &Signature::from_bytes(&sig_arr)).is_ok()
 }
 

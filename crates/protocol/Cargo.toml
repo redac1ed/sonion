@@ -9,6 +9,7 @@ tokio.workspace = true
 tokio-rustls.workspace = true
 rustls.workspace = true
 webpki-roots.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 rcgen.workspace = true

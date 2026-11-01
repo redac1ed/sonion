@@ -9,7 +9,8 @@ pub mod tls;
 pub mod date;
 pub mod ratelimit;
 
-pub use client::{fetch, fetch_redirects, send, Client, ClientError};
+pub use client::{fetch, fetch_redirects, send, send_pinned, Client, ClientError};
+pub use tls::cert_fingerprint;
 pub use error::ProtocolError;
 pub use request::{Request, METHODS};
 pub use response::{Response, Status};

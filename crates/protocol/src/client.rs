@@ -1,5 +1,5 @@
 use crate::head::{find_header_end, parse_headers, CRLF};
-use crate::tls::client_config;
+use crate::tls::{client_config, pinned_client_config};
 use crate::{limits, ProtocolError, Request, Response, SonionUrl, Status, ALPN};
 use rustls::pki_types::ServerName;
 use std::collections::HashMap;
@@ -19,6 +19,7 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_REDIRECTS: usize = 5;
 
 type TlsConn = TlsStream<TcpStream>;
+type PoolKey = (String, u16, Option<String>);
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
@@ -40,10 +41,14 @@ pub enum ClientError {
     RedirectMissingLocation
 }
 
-async fn connect(url: &SonionUrl, insecure_dev: bool) -> Result<TlsConn, ClientError> {
+async fn connect(url: &SonionUrl, insecure_dev: bool, cert_sha256: Option<&str>) -> Result<TlsConn, ClientError> {
     let tcp = timeout(CONNECT_TIMEOUT, TcpStream::connect((url.host.as_str(), url.port))).await
         .map_err(|_| ClientError::Timeout("connect"))??;
-    let connector = TlsConnector::from(Arc::new(client_config(insecure_dev)));
+    let config = match cert_sha256 {
+        Some(pin) if !insecure_dev => pinned_client_config(pin),
+        _ => client_config(insecure_dev)
+    };
+    let connector = TlsConnector::from(Arc::new(config));
     let server_name = ServerName::try_from(url.host.clone())
         .map_err(|_| ClientError::BadServerName(url.host.clone()))?;
     let tls = timeout(CONNECT_TIMEOUT, connector.connect(server_name, tcp)).await
@@ -163,7 +168,16 @@ pub async fn send(
     request: &Request,
     insecure_dev: bool,
 ) -> Result<Response, ClientError> {
-    let mut tls = connect(url, insecure_dev).await?;
+    send_pinned(url, request, insecure_dev, None).await
+}
+
+pub async fn send_pinned(
+    url: &SonionUrl,
+    request: &Request,
+    insecure_dev: bool,
+    cert_sha256: Option<&str>
+) -> Result<Response, ClientError> {
+    let mut tls = connect(url, insecure_dev, cert_sha256).await?;
     let mut buf = Vec::with_capacity(64 * 1024);
     send_on(&mut tls, &mut buf, request).await
 }
@@ -171,7 +185,7 @@ pub async fn send(
 #[derive(Default)]
 pub struct Client {
     insecure_dev: bool,
-    conns: Mutex<HashMap<(String, u16), Vec<Pooled>>>
+    conns: Mutex<HashMap<PoolKey, Vec<Pooled>>>,
 }
 
 struct Pooled {
@@ -187,7 +201,10 @@ impl Client {
         }
     }
     pub async fn send(&self, url: &SonionUrl, request: &Request) -> Result<Response, ClientError> {
-        let key = (url.host.clone(), url.port);
+        self.send_pinned(url, request, None).await
+    }
+    pub async fn send_pinned(&self, url: &SonionUrl, request: &Request, cert_sha256: Option<&str>) -> Result<Response, ClientError> {
+        let key = (url.host.clone(), url.port, cert_sha256.map(str::to_string));
         let mut buf = Vec::with_capacity(64 * 1024);
         if is_idempotent(&request.method) {
             if let Some(p) = self.take(&key).await {
@@ -199,17 +216,17 @@ impl Client {
                 buf.clear();
             }
         }
-        let mut tls = connect(url, self.insecure_dev).await?;
+        let mut tls = connect(url, self.insecure_dev, cert_sha256).await?;
         let resp = send_on(&mut tls, &mut buf, request).await?;
         self.release(key, tls, &buf, request, &resp).await;
         Ok(resp)
     }
-    async fn release(&self, key: (String, u16), tls: TlsConn, leftover: &[u8], request: &Request, resp: &Response) {
+    async fn release(&self, key: PoolKey, tls: TlsConn, leftover: &[u8], request: &Request, resp: &Response) {
         if leftover.is_empty() && !wants_close(resp) && request_wants_keep_alive(request) {
             self.put(key, tls).await;
         }
     }
-    async fn take(&self, key: &(String, u16)) -> Option<Pooled> {
+    async fn take(&self, key: &PoolKey) -> Option<Pooled> {
         let mut map = self.conns.lock().await;
         let pool = map.get_mut(key)?;
         while let Some(p) = pool.pop() {
@@ -219,7 +236,7 @@ impl Client {
         }
         None
     }
-    async fn put(&self, key: (String, u16), tls: TlsConn) {
+    async fn put(&self, key: PoolKey, tls: TlsConn) {
         let mut map = self.conns.lock().await;
         map.entry(key).or_default().push(Pooled {
             tls, 

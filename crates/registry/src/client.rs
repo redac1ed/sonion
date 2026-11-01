@@ -1,6 +1,6 @@
 use crate::{ResolveRecord, verify_record};
 use sha2::{Digest, Sha256};
-use sonion_protocol::{Request, Response, SonionUrl, Status, send};
+use sonion_protocol::{Request, Response, SonionUrl, Status, send, send_pinned};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -69,9 +69,15 @@ impl RegistryClient {
         Ok(v["api_key"].as_str().unwrap_or_default().to_string())
     }
     pub async fn put_domain(&self, api_key: &str, name: &str, endpoints: &[String], ttl: Option<u64>) -> Result<u64, ResolveError> {
+        self.put_domain_pinned(api_key, name, endpoints, ttl, None).await
+    }
+    pub async fn put_domain_pinned(&self, api_key: &str, name: &str, endpoints: &[String], ttl: Option<u64>, cert_sha256: Option<&str>) -> Result<u64, ResolveError> {
         let mut body = serde_json::json!({"endpoints": endpoints});
         if let Some(t) = ttl {
             body["ttl"] = t.into();
+        }
+        if let Some(pin) = cert_sha256 {
+            body["cert_sha256"] = pin.into();
         }
         let req = Request::put(&format!("/v1/domains/{name}"), body.to_string().into_bytes())
             .header("Authorization", &format!("Bearer {api_key}"))
@@ -223,7 +229,7 @@ impl SonionResolver {
                 None => continue
             };
             let req = Request::get(path).header("Host", name);
-            match send(&url, &req, insecure_dev).await {
+            match send_pinned(&url, &req, insecure_dev, rec.cert_sha256.as_deref()).await {
                 Ok(resp) => return Ok(resp),
                 Err(e) => last_err = Some(e)
             }

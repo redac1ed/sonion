@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>domains.son</title>
+        <style>
+            :root {
+                color-scheme: dark;
+                --line: #262626;
+                --dim: #737373;
+                --text: #a3a3a3;
+                --bright: #fff;
+                --good: #4ade80;
+                --bad: #f87171;
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            body {
+                margin: 0;
+                background: #000;
+                color: var(--text);
+                font: 14px/1.6 "Segoe UI", system-ui, sans-serif;
+            }
+
+            a {
+                color: var(--bright);
+                text-decoration: none;
+            }
+
+            a:hover {
+                text-decoration: underline;
+            }
+
+            header {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 8px 24px;
+                max-width: 760px;
+                margin: 0 auto;
+                padding: 24px 20px;
+            }
+
+            .brand {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                font-size: 16px;
+            }
+
+            .brand svg {
+                width: 22px;
+                height: 22px;
+            }
+
+            nav {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 16px;
+                margin-left: auto;
+            }
+
+            nav a {
+                color: var(--dim);
+            }
+
+            nav a.on {
+                color: var(--bright);
+            }
+
+            main {
+                max-width: 760px;
+                margin: 0 auto;
+                padding: 24px 20px 64px;
+            }
+
+            h1 {
+                margin: 24px 0 8px;
+                color: var(--bright);
+                font-size: 26px;
+                font-weight: 400;
+            }
+
+            h2 {
+                margin: 0;
+                color: var(--bright);
+                font-size: 15px;
+                font-weight: 500;
+            }
+
+            p {
+                margin: 0 0 16px;
+            }
+
+            .row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin: 16px 0;
+            }
+
+            .row > input {
+                flex: 1 1 200px;
+                min-width: 0;
+            }
+
+            input, select, button {
+                height: 38px;
+                padding: 0 12px;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                background: #0a0a0a;
+                color: var(--bright);
+                font: inherit;
+            }
+
+            input:focus, select:focus {
+                outline: 1px solid #525252;
+            }
+
+            button {
+                cursor: pointer;
+            }
+
+            button:hover {
+                background: #171717;
+            }
+
+            button.primary {
+                background: var(--bright);
+                border-color: var(--bright);
+                color: #000;
+            }
+
+            button.danger {
+                color: var(--bad);
+            }
+
+            label {
+                display: block;
+                margin-bottom: 14px;
+                color: var(--dim);
+                font-size: 13px;
+            }
+
+            label input:not([type=checkbox]) {
+                display: block;
+                width: 100%;
+                margin-top: 4px;
+            }
+
+            label.check {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            label.check input {
+                width: auto;
+                height: auto;
+            }
+
+            .hint {
+                margin-top: 4px;
+                font-size: 12px;
+            }
+
+            .card {
+                margin-top: 12px;
+                padding: 16px;
+                border: 1px solid var(--line);
+                border-radius: 10px;
+            }
+
+            .card-head {
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: space-between;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .actions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+
+            .item {
+                padding: 12px 0;
+                border-bottom: 1px solid var(--line);
+            }
+
+            .item-head {
+                display: flex;
+                justify-content: space-between;
+                gap: 12px;
+            }
+
+            .muted {
+                color: var(--dim);
+            }
+
+            .good {
+                color: var(--good);
+            }
+
+            .bad {
+                color: var(--bad);
+            }
+
+            .msg {
+                min-height: 22px;
+                margin: 8px 0;
+            }
+
+            dl {
+                display: grid;
+                grid-template-columns: 130px minmax(0, 1fr);
+                gap: 8px 16px;
+                margin: 16px 0;
+            }
+
+            dt {
+                color: var(--dim);
+            }
+
+            dd {
+                margin: 0;
+                color: var(--bright);
+                overflow-wrap: anywhere;
+            }
+
+            .forms {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+                gap: 16px;
+                margin-top: 16px;
+            }
+
+            .forms .card {
+                margin: 0;
+            }
+
+            .forms h2 {
+                margin-bottom: 14px;
+            }
+        </style>
+    </head>
+    <body>
+        <header>
+            <a class="brand" href="#/">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10.5"/>
+                    <circle cx="12" cy="12" r="6.5"/>
+                    <circle cx="12" cy="12" r="2.5"/>
+                </svg>
+                domains.son
+            </a>
+            <nav id="nav"></nav>
+        </header>
+        <main id="main"></main>
+        <script>
+            const main = document.getElementById("main");
+            const nav = document.getElementById("nav");
+            const SESSION = "sonion-session";
+            const PAGE_SIZE = 50;
+            let renderId = 0;
+
+            function h(tag, props, ...kids) {
+                const el = document.createElement(tag);
+                for (const [k, v] of Object.entries(props || {})) {
+                    el[k] = v;
+                }
+                el.append(...kids.flat().filter((k) => k !== null && k !== undefined));
+                return el;
+            }
+
+            function session() {
+                try {
+                    return JSON.parse(localStorage.getItem(SESSION));
+                } catch (_) {
+                    return null;
+                }
+            }
+
+            function setSession(value) {
+                try {
+                    if (value) {
+                        localStorage.setItem(SESSION, JSON.stringify(value));
+                    } else {
+                        localStorage.removeItem(SESSION);
+                    }
+                } catch (_) {}
+                drawNav();
+            }
+
+            async function api(method, path, body) {
+                const headers = {};
+                const s = session();
+                if (body) {
+                    headers["Content-Type"] = "application/json";
+                }
+                if (s) {
+                    headers.Authorization = `Bearer ${s.key}`;
+                }
+                let res;
+                try {
+                    res = await fetch(path, {
+                        method,
+                        headers,
+                        body: body ? JSON.stringify(body) : undefined
+                    });
+                } catch (_) {
+                    throw new Error("Couldn't reach the registry. Try again in a moment.");
+                }
+                let data = null;
+                try {
+                    data = JSON.parse(await res.text());
+                } catch (_) {}
+                if (res.ok && data) {
+                    return data;
+                }
+                if (res.status === 401 && s) {
+                    setSession(null);
+                }
+                throw new Error((data && data.error) || `The registry answered with an error (${res.status}).`);
+            }
+
+            function siteUrl(name) {
+                return location.protocol === "sonion:" ? `sonion://${name}/` : `http://sonion.${name}/`;
+            }
+
+            function date(secs) {
+                if (!secs) {
+                    return "Not recorded";
+                }
+                return new Date(secs * 1000).toLocaleDateString(undefined, {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric"
+                });
+            }
+
+            function message() {
+                return h("div", {className: "msg"});
+            }
+
+            function say(el, text, cls) {
+                el.textContent = text;
+                el.className = `msg ${cls || "muted"}`;
+            }
+
+            function drawNav() {
+                const route = location.hash.slice(2).split("/")[0];
+                const links = [["", "Search"], ["sites", "Sites"], ["whois", "Whois"]];
+                links.push(session() ? ["mine", "My domains"] : ["account", "Sign in"]);
+                nav.replaceChildren(...links.map(([to, text]) => h("a", {
+                    href: `#/${to}`,
+                    textContent: text,
+                    className: route === to ? "on" : ""
+                })));
+                if (session()) {
+                    nav.append(h("a", {href: "#/", textContent: "Sign out", onclick: signOut}));
+                }
+            }
+
+            async function signOut() {
+                try {
+                    await api("POST", "/v1/logout");
+                } catch (_) {}
+                setSession(null);
+            }
+
+            function hint(text) {
+                return h("div", {className: "hint", textContent: text});
+            }
+
+            function domainForm(name, current, onDone) {
+                const endpoints = h("input", {
+                    value: current ? current.endpoints.join(", ") : "",
+                    placeholder: "203.0.113.7:6767",
+                    required: true
+                });
+                const pin = h("input", {
+                    value: (current && current.cert_sha256) || "",
+                    placeholder: "64 hex characters",
+                    spellcheck: false
+                });
+                const description = h("input", {
+                    value: (current && current.description) || "",
+                    maxLength: 140,
+                    placeholder: "One line about your site"
+                });
+                const ttl = h("input", {
+                    type: "number",
+                    min: 1,
+                    max: 3600,
+                    value: current ? current.ttl : 300
+                });
+                const listed = h("input", {
+                    type: "checkbox",
+                    checked: current ? current.listed : true
+                });
+                const status = message();
+
+                const onsubmit = async (e) => {
+                    e.preventDefault();
+                    say(status, "Saving...");
+                    try {
+                        await api("PUT", `/v1/domains/${name}`, {
+                            endpoints: endpoints.value.split(",").map((v) => v.trim()).filter(Boolean),
+                            ttl: Number(ttl.value),
+                            cert_sha256: pin.value.trim().toLowerCase(),
+                            description: description.value.trim(),
+                            listed: listed.checked
+                        });
+                        onDone();
+                    } catch (err) {
+                        say(status, err.message, "bad");
+                    }
+                };
+
+                return h("form", {onsubmit},
+                    h("label", null,
+                        "Server address",
+                        endpoints,
+                        hint("host:port. Separate several with commas; the browser tries them in order.")
+                    ),
+                    h("label", null,
+                        "Certificate fingerprint",
+                        pin,
+                        hint("Run: sonion fingerprint certs/cert.pem. Needed for self-signed certs. Leave it empty if your cert is from a real certificate authority.")
+                    ),
+                    h("label", null, "Description", description),
+                    h("label", null, "Cache time in seconds", ttl),
+                    h("label", {className: "check"}, listed, "Show on the Sites page"),
+                    status,
+                    h("button", {
+                        className: "primary",
+                        textContent: current ? "Save changes" : `Register ${name}`
+                    })
+                );
+            }
+
+            async function viewSearch(id) {
+                const input = h("input", {
+                    placeholder: "yourname",
+                    autofocus: true,
+                    spellcheck: false,
+                    autocapitalize: "off"
+                });
+                const tld = h("select", {ariaLabel: "Ending"});
+                const result = h("div");
+
+                const onsubmit = async (e) => {
+                    e.preventDefault();
+                    const raw = input.value.trim().toLowerCase();
+                    if (!raw) {
+                        return;
+                    }
+                    const hasTld = [...tld.options].some((o) => raw.endsWith(`.${o.value}`));
+                    const name = hasTld ? raw : `${raw}.${tld.value}`;
+                    const status = message();
+                    result.replaceChildren(status);
+                    say(status, "Checking...");
+                    try {
+                        const who = await api("GET", `/v1/whois/${name}`);
+                        if (who.registered) {
+                            say(status, `${name} is taken.`, "bad");
+                            result.append(h("a", {href: `#/whois/${name}`, textContent: "See who has it"}));
+                        } else if (session()) {
+                            say(status, `${name} is available.`, "good");
+                            result.append(h("div", {className: "card"}, domainForm(name, null, () => {
+                                location.hash = "#/mine";
+                            })));
+                        } else {
+                            say(status, `${name} is available.`, "good");
+                            result.append(h("a", {href: "#/account", textContent: "Sign in to register it"}));
+                        }
+                    } catch (err) {
+                        say(status, err.message, "bad");
+                    }
+                };
+
+                main.replaceChildren(
+                    h("h1", {textContent: "Find your domain"}),
+                    h("p", {textContent: "Free, and yours for a year. Saving changes to a domain renews it."}),
+                    h("form", {className: "row", onsubmit},
+                        input,
+                        tld,
+                        h("button", {className: "primary", textContent: "Check"})
+                    ),
+                    result
+                );
+
+                try {
+                    const {tlds} = await api("GET", "/v1/tlds");
+                    if (id !== renderId) {
+                        return;
+                    }
+                    tld.append(...tlds.map((t) => h("option", {value: t, textContent: `.${t}`})));
+                    tld.value = "son";
+                } catch (err) {
+                    const status = message();
+                    result.replaceChildren(status);
+                    say(status, err.message, "bad");
+                }
+            }
+
+            async function viewSites(id) {
+                const filter = h("input", {placeholder: "Filter by name or description", spellcheck: false});
+                const list = h("div");
+                const more = h("button", {textContent: "Show more", hidden: true});
+                const status = message();
+
+                main.replaceChildren(
+                    h("h1", {textContent: "Sites"}),
+                    h("p", {textContent: "Everything registered on sonion. Owners can hide their domain from this page."}),
+                    h("div", {className: "row"}, filter),
+                    status,
+                    list,
+                    h("div", {className: "row"}, more)
+                );
+
+                let sites;
+                try {
+                    ({sites} = await api("GET", "/v1/sites"));
+                } catch (err) {
+                    return say(status, err.message, "bad");
+                }
+                if (id !== renderId) {
+                    return;
+                }
+
+                let shown = PAGE_SIZE;
+                const draw = () => {
+                    const q = filter.value.trim().toLowerCase();
+                    const hits = sites.filter((s) => s.name.includes(q) || s.description.toLowerCase().includes(q));
+                    say(status, `${hits.length} ${hits.length === 1 ? "site" : "sites"}`);
+                    list.replaceChildren(...hits.slice(0, shown).map((s) => h("div", {className: "item"},
+                        h("div", {className: "item-head"},
+                            h("a", {href: siteUrl(s.name), textContent: s.name}),
+                            h("a", {href: `#/whois/${s.name}`, className: "muted", textContent: "whois"})
+                        ),
+                        s.description ? h("div", {className: "muted", textContent: s.description}) : null
+                    )));
+                    more.hidden = hits.length <= shown;
+                };
+                filter.oninput = () => {
+                    shown = PAGE_SIZE;
+                    draw();
+                };
+                more.onclick = () => {
+                    shown += PAGE_SIZE;
+                    draw();
+                };
+                draw();
+            }
+
+            async function viewWhois(id, name) {
+                const input = h("input", {
+                    value: name || "",
+                    placeholder: "cool.rizz",
+                    spellcheck: false,
+                    autocapitalize: "off"
+                });
+                const result = h("div");
+
+                const onsubmit = (e) => {
+                    e.preventDefault();
+                    const next = input.value.trim().toLowerCase();
+                    if (next) {
+                        location.hash = `#/whois/${next}`;
+                    }
+                };
+
+                main.replaceChildren(
+                    h("h1", {textContent: "Whois"}),
+                    h("p", {textContent: "See who owns a domain and where it points."}),
+                    h("form", {className: "row", onsubmit},
+                        input,
+                        h("button", {className: "primary", textContent: "Look up"})
+                    ),
+                    result
+                );
+
+                if (!name) {
+                    return;
+                }
+                const status = message();
+                result.append(status);
+                try {
+                    const who = await api("GET", `/v1/whois/${name}`);
+                    if (id !== renderId) {
+                        return;
+                    }
+                    if (!who.registered) {
+                        say(status, `${name} isn't registered. It's available.`, "good");
+                        return;
+                    }
+                    const rows = [
+                        ["Domain", h("a", {href: siteUrl(who.name), textContent: who.name})],
+                        ["Owner", who.owner],
+                        ["Description", who.description || "None"],
+                        ["Points to", who.endpoints.join(", ")],
+                        ["Certificate", who.cert_sha256 || "Not pinned. The site needs a certificate from a real authority."],
+                        ["Registered", date(who.created_at)],
+                        ["Last changed", date(who.updated_at)],
+                        ["Expires", date(who.expires_at)]
+                    ];
+                    result.replaceChildren(h("dl", null, rows.flatMap(([k, v]) => [
+                        h("dt", {textContent: k}),
+                        h("dd", null, v)
+                    ])));
+                } catch (err) {
+                    say(status, err.message, "bad");
+                }
+            }
+
+            function viewAccount() {
+                if (session()) {
+                    location.hash = "#/mine";
+                    return;
+                }
+
+                const authForm = (title, button, submit, usernameHint) => {
+                    const username = h("input", {
+                        autocomplete: "username",
+                        required: true,
+                        spellcheck: false,
+                        autocapitalize: "off"
+                    });
+                    const password = h("input", {
+                        type: "password",
+                        required: true,
+                        minLength: 8,
+                        maxLength: 256
+                    });
+                    const status = message();
+
+                    const onsubmit = async (e) => {
+                        e.preventDefault();
+                        say(status, "One moment...");
+                        try {
+                            await submit(username.value.trim(), password.value);
+                            location.hash = "#/mine";
+                        } catch (err) {
+                            say(status, err.message, "bad");
+                        }
+                    };
+
+                    return h("form", {className: "card", onsubmit},
+                        h("h2", {textContent: title}),
+                        h("label", null, "Username", username, usernameHint ? hint(usernameHint) : null),
+                        h("label", null, "Password", password),
+                        status,
+                        h("button", {className: "primary", textContent: button})
+                    );
+                };
+
+                const logIn = async (username, password) => {
+                    const {api_key} = await api("POST", "/v1/login", {username, password});
+                    setSession({key: api_key, username});
+                };
+
+                const signUp = async (username, password) => {
+                    await api("POST", "/v1/accounts", {username, password});
+                    await logIn(username, password);
+                };
+
+                main.replaceChildren(
+                    h("h1", {textContent: "Sign in"}),
+                    h("p", {textContent: "There's no password reset yet, so keep yours somewhere safe."}),
+                    h("div", {className: "forms"},
+                        authForm("I have an account", "Sign in", logIn),
+                        authForm("I'm new here", "Create account", signUp, "Lowercase letters, numbers and dashes.")
+                    )
+                );
+            }
+
+            async function viewMine(id) {
+                if (!session()) {
+                    location.hash = "#/account";
+                    return;
+                }
+
+                const status = message();
+                const list = h("div");
+                main.replaceChildren(
+                    h("h1", {textContent: "My domains"}),
+                    h("p", {className: "muted", textContent: `Signed in as ${session().username}`}),
+                    status,
+                    list
+                );
+
+                const refresh = () => viewMine(renderId);
+
+                let domains;
+                try {
+                    ({domains} = await api("GET", "/v1/domains"));
+                } catch (err) {
+                    if (!session()) {
+                        location.hash = "#/account";
+                    }
+                    return say(status, err.message, "bad");
+                }
+                if (id !== renderId) {
+                    return;
+                }
+                if (!domains.length) {
+                    list.append(h("p", null,
+                        "Nothing here yet. ",
+                        h("a", {href: "#/", textContent: "Find a domain"})
+                    ));
+                    return;
+                }
+
+                domains.sort((a, b) => a.name.localeCompare(b.name));
+                list.append(...domains.map((d) => {
+                    const body = h("div");
+                    const note = message();
+
+                    const del = h("button", {
+                        className: "danger",
+                        textContent: "Delete",
+                        onclick: async () => {
+                            if (del.textContent === "Delete") {
+                                del.textContent = `Really delete ${d.name}?`;
+                                return;
+                            }
+                            try {
+                                await api("DELETE", `/v1/domains/${d.name}`);
+                                refresh();
+                            } catch (err) {
+                                say(note, err.message, "bad");
+                            }
+                        }
+                    });
+
+                    const renew = h("button", {
+                        textContent: "Renew",
+                        onclick: async () => {
+                            try {
+                                await api("PUT", `/v1/domains/${d.name}`, {endpoints: d.endpoints});
+                                refresh();
+                            } catch (err) {
+                                say(note, err.message, "bad");
+                            }
+                        }
+                    });
+
+                    const edit = h("button", {
+                        textContent: "Edit",
+                        onclick: () => {
+                            body.replaceChildren(body.childElementCount ? "" : domainForm(d.name, d, refresh));
+                        }
+                    });
+
+                    return h("div", {className: "card"},
+                        h("div", {className: "card-head"},
+                            h("h2", null, h("a", {href: siteUrl(d.name), textContent: d.name})),
+                            h("div", {className: "actions"}, edit, renew, del)
+                        ),
+                        h("div", {
+                            className: d.expired ? "bad" : "muted",
+                            textContent: `${d.expired ? "Expired" : "Expires"} ${date(d.expires_at)} · ${d.endpoints.join(", ")}`
+                        }),
+                        d.cert_sha256 ? null : h("div", {
+                            className: "muted",
+                            textContent: "No certificate fingerprint. Self-signed sites won't open until you add one."
+                        }),
+                        note,
+                        body
+                    );
+                }));
+            }
+
+            function render() {
+                const id = ++renderId;
+                const [route, arg] = location.hash.slice(2).split("/");
+                drawNav();
+                switch (route) {
+                    case "sites":
+                        return viewSites(id);
+                    case "whois":
+                        return viewWhois(id, arg);
+                    case "account":
+                        return viewAccount();
+                    case "mine":
+                        return viewMine(id);
+                    default:
+                        return viewSearch(id);
+                }
+            }
+            window.addEventListener("hashchange", render);
+            render();
+        </script>
+    </body>
+</html>

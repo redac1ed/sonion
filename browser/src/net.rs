@@ -77,7 +77,7 @@ impl NetStack {
             for ep in &rec.endpoints {
                 let Some(target) = registry::client::endpoint_url(ep, &parsed.encoded_path()) else { continue; };
                 let req = build_request(&outgoing, &target.encoded_path(), &parsed.host);
-                match self.client.send(&target, &req).await {
+                match self.client.send_pinned(&target, &req, rec.cert_sha256.as_deref()).await {
                     Ok(r) => {
                         out = Some(r);
                         break;
@@ -88,6 +88,7 @@ impl NetStack {
             match out {
                 Some(r) => r,
                 None => {
+                    self.resolver.invalidate(&parsed.host);
                     return Err(FetchError::Request(
                         last.unwrap_or(sonion_protocol::ClientError::Timeout("all endpoints"))
                     ));
