@@ -508,7 +508,7 @@ fn serve_ui_asset(raw_path: &str) -> wry::http::Response<std::borrow::Cow<'stati
             None => {
                 return wry::http::Response::builder().status(500)
                     .header("Content-Type", "text/plain")
-                    .body(std::borrow::Cow::Borrowed(b"UI not built, run `npm install && npm run build` inside browser/ui".as_slice())).unwrap();
+                    .body(std::borrow::Cow::Borrowed(b"UI not built, run `bun install && bun run build` inside browser/ui".as_slice())).unwrap();
             }
         }
     };

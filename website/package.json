@@ -1,0 +1,15 @@
+{
+    "name": "sonion-website",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "astro dev",
+        "build": "astro build",
+        "preview": "astro preview"
+    },
+    "dependencies": {
+        "@astrojs/starlight": "^0.42.8",
+        "astro": "^7.4.4",
+        "sharp": "^0.35.5"
+    }
+}

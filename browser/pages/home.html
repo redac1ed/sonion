@@ -92,24 +92,28 @@
             margin-top: 36px;
         }
         .tile {
-            width: 96px;
+            width: 280px;
+            height: 44px;
             display: flex;
-            flex-direction: column;
             align-items: center;
+            justify-content: center;
             gap: 10px;
-            padding: 14px 8px 12px;
-            background: transparent;
-            border: none;
-            border-radius: 14px;
+            background: #0a0a0a;
+            border: 1px solid #262626;
+            border-radius: 999px;
             color: #a3a3a3;
-            font: 12px "Segoe UI", system-ui, sans-serif;
+            font: 14px "Segoe UI", system-ui, sans-serif;
             cursor: pointer;
-            transition: background 0.15s, color 0.15s, transform 0.15s;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
         }
         .tile:hover {
             background: #141414;
+            border-color: #525252;
             color: #ffffff;
-            transform: translateY(-2px);
+        }
+        .tile svg {
+            width: 18px;
+            height: 18px;
         }
         .tile-icon {
             width: 44px;
@@ -161,8 +165,17 @@
                 <circle cx="11" cy="11" r="7"/>
                 <path d="M20 20l-3.5-3.5"/>
             </svg>
-            <input class="search" spellcheck="false" autocomplete="off" autofocus placeholder="Enter a sonion address, like cool.rizz">
+            <input class="search" spellcheck="false" autocomplete="off" autofocus placeholder="Enter a sonion address, like domains.son">
         </form>
+        <div class="tiles">
+            <button class="tile" type="button" data-url="sonion://domains.son/#/sites">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9"/>
+                    <path d="M3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9s1.3-6.5 3.8-9z"/>
+                </svg>
+                Browse sites
+            </button>
+        </div>
     </main>
     <script>
         const open = (value) => {

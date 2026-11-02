@@ -8,3 +8,6 @@ notes.txt
 config.json
 /browser/ui/node_modules
 /browser/ui/dist
+/website/node_modules
+/website/dist
+/website/.astro

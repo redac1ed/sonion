@@ -4,7 +4,7 @@
 
 A recreation of the World Wide Web (WWW), with its own protocol (`sonion://`), domains (TLDs like `.son`, `.rizz` etc.), server, registry and browser to tie it all together. 
 
-Heavily inspired by [gurted.com](https://gurted.com).
+Inspired by [gurted.com](https://gurted.com).
 
 ## Features
 
@@ -40,7 +40,7 @@ Go over to the [latest release page](https://github.com/redac1ed/sonion/releases
 
 Just unzip the download and open the respective build.
 
-Note: The Linux build needs WebKitGTK, install by `sudo apt install libwebkit2gtk-4.1-0`. 
+Note: The Linux build needs WebKitGTK, install by `sudo apt install libwebkit2gtk-4.1-0`. Also, the Linux and Mac builds are **EXPERIMENTAL**, and may have bugs in them.
 
 ## Host A Site
 
@@ -52,7 +52,7 @@ sonion serve --root ./my-site --cert certs/cert.pem --key certs/key.pem
 
 sonion register --username you --password "something long"
 sonion login --username you --password "something long"
-sonion put-domain yourdomain.son --api-key <key> --endpoints <your ip>:6767
+sonion put-domain yourdomain.son --api-key <key> --endpoints <your ip>:6767 --cert certs/cert.pem
 ```
 
 After that, navigate to `sonion://yourdomain.son`.

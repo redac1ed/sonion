@@ -1,0 +1,24 @@
+:root {
+    --sl-font: "Segoe UI", system-ui, sans-serif;
+    --sl-font-mono: ui-monospace, Consolas, monospace;
+}
+
+:root[data-theme="dark"] {
+    --sl-color-accent-low: #262626;
+    --sl-color-accent: #d4d4d4;
+    --sl-color-accent-high: #ffffff;
+    --sl-color-white: #ffffff;
+    --sl-color-gray-1: #e5e5e5;
+    --sl-color-gray-2: #d4d4d4;
+    --sl-color-gray-3: #a3a3a3;
+    --sl-color-gray-4: #737373;
+    --sl-color-gray-5: #262626;
+    --sl-color-gray-6: #141414;
+    --sl-color-black: #000000;
+}
+
+:root[data-theme="light"] {
+    --sl-color-accent-low: #e5e5e5;
+    --sl-color-accent: #262626;
+    --sl-color-accent-high: #000000;
+}

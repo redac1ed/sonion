@@ -19,7 +19,7 @@ impl Default for Settings {
             registry: DEFAULT_REGISTRY.to_string(),
             pin_key: None, 
             insecure_dev: false,
-            homepage: "sonion://home.son".to_string()
+            homepage: "sonion://domains.son/#/sites".to_string()
         }
     }
 }

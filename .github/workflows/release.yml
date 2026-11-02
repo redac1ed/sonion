@@ -71,16 +71,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: browser/ui/package-lock.json
+          bun-version: 1.3.11
       - name: build ui
         working-directory: browser/ui
         run: |
-          npm ci
-          npm run build
+          bun install --frozen-lockfile
+          bun run build
       - name: linux deps
         if: runner.os == 'Linux'
         run: |

@@ -9,14 +9,14 @@ import {FindBar} from "./components/FindBar";
 
 const BOOT_SETTINGS: BrowserSettings = window.__SONION_SETTINGS__ ?? {
     registry: "sonion://87.192.41.2:6767",
-    homepage: "sonion://cool.rizz",
+    homepage: "sonion://domains.son/#/sites",
     pin_key: "",
     insecure_dev: true
 };
 const NEW_TAB_URL = "sonion-nav://home";
 const BOOT_PROFILE: Partial<Profile> | null = window.__SONION_PROFILE__ ?? null;
 const INITIAL_BOOKMARKS: BookmarkItem[] = [
-    {id: "bm-1", title: "cool.rizz", url: "sonion://cool.rizz"},
+    {id: "bm-1", title: "Other Sites", url: "sonion://domains.son/#/sites"},
     {id: "bm-2", title: "localhost:6767", url: "sonion://localhost:6767"},
     {id: "bm-3", title: "New Tab", url: "sonion-nav://home"}
 ];
