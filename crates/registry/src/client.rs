@@ -247,12 +247,7 @@ pub fn endpoint_url(endpoint: &str, path: &str) -> Option<SonionUrl> {
     if host.is_empty() {
         return None;
     }
-    Some(SonionUrl {
-        host: host.to_string(),
-        port, 
-        path: path.to_string(),
-        query: None
-    })
+    SonionUrl::parse(&format!("sonion://{host}:{port}{path}")).ok()
 }
 
 pub fn cache_key_fingerprint(rec: &ResolveRecord) -> String {

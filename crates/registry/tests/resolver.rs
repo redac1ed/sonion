@@ -103,6 +103,13 @@ async fn endpoint_url_parsing() {
     assert!(endpoint_url("h:notaport", "/").is_none());
 }
 #[tokio::test]
+async fn endpoint_url_keeps_encoded_paths_and_queries() {
+    let u = endpoint_url("example.son:6767", "/lib/%24Window.js?q=1").unwrap();
+    assert_eq!(u.path, "/lib/$Window.js");
+    assert_eq!(u.query.as_deref(), Some("q=1"));
+    assert_eq!(u.encoded_path(), "/lib/%24Window.js?q=1");
+}
+#[tokio::test]
 async fn registry_client_full_flow() {
     let (_t, port) = spawn().await;
     let client = RegistryClient::new(base(port), true);
