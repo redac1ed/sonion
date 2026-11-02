@@ -94,10 +94,28 @@ fn spawn_tab_webview(window: &Window, web_context: &mut WebContext, net: NetHand
     let proxy_for_ipc = proxy.clone();
     let proxy_for_dl_start = proxy.clone();
     let proxy_for_dl_done = proxy.clone();
+    let proxy_for_nav = proxy.clone();
+    let proxy_for_new_window = proxy.clone();
     let tid_for_ipc = tab_id.to_string();
+    let tid_for_nav = tab_id.to_string();
+    let tid_for_new_window = tab_id.to_string();
     let home_prefix = to_webview_url("sonion-nav://");
     let wv = WebViewBuilder::new_with_web_context(web_context)
         .with_initialization_script(INJECT_SCRIPT)
+        .with_navigation_handler(move |url| {
+            if to_webview_url(&url) == url {
+                return true;
+            }
+            let _ = proxy_for_nav.send_event(UserEvent::OpenFromPage {tab_id: tid_for_nav.clone(), url});
+            false
+        })
+        .with_new_window_req_handler(move |url, _features| {
+            if to_webview_url(&url) == url {
+                return wry::NewWindowResponse::Allow;
+            }
+            let _ = proxy_for_new_window.send_event(UserEvent::OpenFromPage {tab_id: tid_for_new_window.clone(), url});
+            wry::NewWindowResponse::Deny
+        })
         .with_on_page_load_handler(move |event, _url| {
             let loading = matches!(event, wry::PageLoadEvent::Started);
             let _ = proxy.send_event(UserEvent::PageLoaded {

@@ -42,6 +42,16 @@ The `--cert` flag matters. It publishes your certificate's fingerprint in the do
 
 Go to `sonion://yourname.son` in the browser.
 
+## Link to other sites
+
+Use a full `sonion://` address:
+
+```html
+<a href="sonion://other.son/">Another site</a>
+```
+
+Links and `GET` forms work this way. On Windows, images, scripts and `fetch` calls can't load from a `sonion://` address, so keep those files on your own site and use relative paths.
+
 ## How files are served
 
 - `/about/` serves `about/index.html`, and `/about` redirects to `/about/` if that folder exists.

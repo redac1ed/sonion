@@ -1,6 +1,6 @@
 [package]
 name = "sonion-browser"
-version = "0.1.0"
+version = "0.3.2"
 edition = "2021"
 
 [dependencies]
@@ -23,3 +23,6 @@ rust-embed = "8"
 [dev-dependencies]
 tempfile.workspace = true
 rcgen.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
