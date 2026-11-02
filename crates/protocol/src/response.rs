@@ -255,7 +255,7 @@ impl Response {
             .ok_or_else(|| ProtocolError::MalformedLine(status_line.into()))?;
         let status = Status::from_code(code)?;
         let headers = parse_headers(lines)?;
-        let body_bytes = &bytes[header_end + 4..]; // skip CRLFCRLF
+        let body_bytes = &bytes[header_end + 4..];
         let mut resp = Self {
             status,
             headers,
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn serialize_200_matches_golden() {
         let mut resp = Response::new(Status::Ok, b"konichiwa son".to_vec());
-        resp.set_header("Content-Type", "text/html"); // set_header appended to content type cus of the golden thing
+        resp.set_header("Content-Type", "text/html");
         resp.headers = vec![
             ("Content-Type".into(), "text/html".into()),
             ("Content-Length".into(), "13".into()),

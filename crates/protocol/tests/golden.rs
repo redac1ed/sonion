@@ -1,7 +1,7 @@
 use sonion_protocol::{Request, Response, Status};
 
 fn to_wire(fixture: &str) -> Vec<u8> {
-    let mut out = String::with_capacity(fixture.len() * 2); // lf to crlf
+    let mut out = String::with_capacity(fixture.len() * 2);
     let mut chars = fixture.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\r' && chars.peek() == Some(&'\n') {
@@ -90,7 +90,6 @@ fn golden_response_chunked_parse() {
 fn golden_response_chunked_roundtrip() {
     let bytes = load_fixture("response-chunked.txt");
     let resp = Response::parse(&bytes).expect("should parse");
-    // Serialize with chunked encoding
     let serialized = resp.serialize_chunked(4);
     let resp2 = Response::parse(&serialized).expect("re-parse should succeed");
     assert_eq!(resp.body, resp2.body);

@@ -105,7 +105,7 @@ async fn hundred_concurrent_fetches_all_succeed() {
 }
 #[tokio::test]
 async fn file_over_max_body_gets_413_not_silence() {
-    let big = vec![0u8; 11 * 1024 * 1024]; // 11 MiB > 10 MiB cap
+    let big = vec![0u8; 11 * 1024 * 1024];
     let (_tmp, port) = spawn_site(&[("big.bin", big)]).await;
     let result = fetch(&url(port, "/big.bin"), true).await;
     match result {
