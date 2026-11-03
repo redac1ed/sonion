@@ -2171,7 +2171,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "registry"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2506,7 +2506,7 @@ dependencies = [
 
 [[package]]
 name = "sonion"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2524,7 +2524,7 @@ dependencies = [
 
 [[package]]
 name = "sonion-browser"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "mime_guess",
@@ -2548,7 +2548,7 @@ dependencies = [
 
 [[package]]
 name = "sonion-protocol"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "rcgen",
  "rustls",
@@ -2561,7 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "sonion-server"
-version = "0.3.3"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "mime_guess",
