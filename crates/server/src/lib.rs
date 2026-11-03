@@ -294,6 +294,9 @@ async fn build_response(root: &Path, request: &Request) -> Response {
     let Some(path) = resolve_path(root, raw_path) else {
         return error_page(root, Status::BadRequest, b"invalid path").await;
     };
+    if is_hidden(raw_path) {
+        return error_page(root, Status::NotFound, b"not found").await;
+    }
     if path.is_dir() && !raw_path.ends_with('/') {
         let mut resp = Response::new(Status::MovedPermanently, Vec::new());
         resp.set_header("Location", format!("{raw_path}/"));
@@ -382,7 +385,7 @@ fn resolve_path(root: &Path, request_path: &str) -> Option<PathBuf> {
         match seg {
             "" | "." => {}
             ".." => return None,
-            s if s.contains(':') || s.contains('\0') => return None,
+            s if s.contains(':') || s.contains('\0') || s.contains('\\') => return None,
             s => out.push(s),
         }
     }
@@ -390,6 +393,14 @@ fn resolve_path(root: &Path, request_path: &str) -> Option<PathBuf> {
         return None;
     }
     Some(out)
+}
+
+fn is_hidden(request_path: &str) -> bool {
+    sonion_protocol::decode_path(request_path).is_ok_and(|decoded| {
+        decoded
+            .split('/')
+            .any(|seg| seg.starts_with('.') && seg != "." && seg != ".well-known")
+    })
 }
 
 fn simple(status: Status, body: &[u8]) -> Response {

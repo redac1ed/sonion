@@ -67,3 +67,13 @@ For more information about how to run your site, check out the [docs](https://so
 
 MIT License.
 
+## Credits
+
+I used these sites for the demos on the protocol:
+
+- **2048**: https://github.com/gabrielecirulli/2048
+- **Hextris**: https://github.com/Hextris/hextris
+- **A Dark Room**: https://github.com/doublespeakgames/adarkroom
+- **Astray**: https://github.com/wwwtyro/Astray
+- **JS Paint**: https://github.com/1j01/jspaint
+
