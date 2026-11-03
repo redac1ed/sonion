@@ -5,23 +5,23 @@ use std::time::{Duration, Instant};
 
 const MAX_TRACKED: usize = 10_000;
 
-pub struct RateLimiter { 
-    burst: f64, 
+pub struct RateLimiter {
+    burst: f64,
     per_sec: f64,
-    buckets: Mutex<HashMap<IpAddr, Bucket>>
+    buckets: Mutex<HashMap<IpAddr, Bucket>>,
 }
 
 struct Bucket {
     tokens: f64,
-    last: Instant
+    last: Instant,
 }
 
 impl RateLimiter {
     pub fn new(burst: u32, per_sec: f64) -> Self {
         Self {
             burst: burst.max(1) as f64,
-            per_sec, 
-            buckets: Mutex::new(HashMap::new())
+            per_sec,
+            buckets: Mutex::new(HashMap::new()),
         }
     }
     pub fn try_acquire(&self, ip: IpAddr) -> Result<(), Duration> {
@@ -32,7 +32,7 @@ impl RateLimiter {
         }
         let b = map.entry(key(ip)).or_insert(Bucket {
             tokens: self.burst,
-            last: now
+            last: now,
         });
         b.tokens = self.refilled(b, now);
         b.last = now;
@@ -40,7 +40,11 @@ impl RateLimiter {
             b.tokens -= 1.0;
             return Ok(());
         }
-        let wait = if self.per_sec > 0.0 { (1.0 - b.tokens) / self.per_sec } else { 3600.0 };
+        let wait = if self.per_sec > 0.0 {
+            (1.0 - b.tokens) / self.per_sec
+        } else {
+            3600.0
+        };
         Err(Duration::from_secs_f64(wait.max(1.0)))
     }
     fn refilled(&self, b: &Bucket, now: Instant) -> f64 {
@@ -54,14 +58,14 @@ fn key(ip: IpAddr) -> IpAddr {
             let s = v6.segments();
             IpAddr::V6(Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0))
         }
-        v4 => v4
+        v4 => v4,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] 
+    #[test]
     fn allows_burst_then_limits() {
         let rl = RateLimiter::new(3, 0.0);
         let ip: IpAddr = "10.0.0.1".parse().unwrap();

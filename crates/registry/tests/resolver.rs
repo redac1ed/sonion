@@ -9,7 +9,7 @@ fn certs() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
     let c = p.self_signed(&kp).unwrap();
     (
         vec![c.der().clone()],
-        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(kp.serialize_der()))
+        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(kp.serialize_der())),
     )
 }
 
@@ -17,7 +17,9 @@ async fn spawn() -> (tempfile::TempDir, u16) {
     let tmp = tempfile::tempdir().unwrap();
     let reg = Registry::open(tmp.path()).unwrap();
     let (c, k) = certs();
-    let srv = RegistryServer::bind("127.0.0.1:0".parse().unwrap(), reg, c, k).await.unwrap();
+    let srv = RegistryServer::bind("127.0.0.1:0".parse().unwrap(), reg, c, k)
+        .await
+        .unwrap();
     let port = srv.local_addr().unwrap().port();
     tokio::spawn(srv.run());
     (tmp, port)
@@ -87,7 +89,7 @@ async fn invalidate_forces_refetch() {
 async fn clear_expired_prunes() {
     let (_t, port) = spawn().await;
     setup_domain(port, "sobble", "sasda.son", &["127.0.0.1:6767"]).await;
-    let resolver = SonionResolver::new(base(port), true,  None);
+    let resolver = SonionResolver::new(base(port), true, None);
     resolver.resolve("sasda.son").await.unwrap();
     assert_eq!(resolver.cache_len(), 1);
     assert_eq!(resolver.clear_expired(), 0);
@@ -114,11 +116,22 @@ async fn registry_client_full_flow() {
     let (_t, port) = spawn().await;
     let client = RegistryClient::new(base(port), true);
     client.create_account("sobble", "skibidi123").await.unwrap();
-    let err = client.create_account("sobble", "skibidi123").await.unwrap_err();
+    let err = client
+        .create_account("sobble", "skibidi123")
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("409") || err.to_string().contains("exists"));
     let key = client.login("sobble", "skibidi123").await.unwrap();
     assert_eq!(key.len(), 64);
-    let expires = client.put_domain(&key, "sumshi.son", &["127.0.0.1:6767".to_string()], Some(600)).await.unwrap();
+    let expires = client
+        .put_domain(
+            &key,
+            "sumshi.son",
+            &["127.0.0.1:6767".to_string()],
+            Some(600),
+        )
+        .await
+        .unwrap();
     assert!(expires > 0);
     let domains = client.list_domains(&key).await.unwrap();
     assert_eq!(domains.len(), 1);

@@ -72,7 +72,7 @@ async fn fetch_over_tls13_insecure_dev() {
     assert_eq!(got.status, Status::Ok);
     assert_eq!(got.body, b"hello over tls");
     assert_eq!(got.get_header("Content-Type"), Some("text/plain"));
-    let req = Request::parse(&rx.await.unwrap()).unwrap(); 
+    let req = Request::parse(&rx.await.unwrap()).unwrap();
     assert_eq!(req.method, "GET");
     assert_eq!(req.path, "/");
     assert!(req
@@ -102,5 +102,4 @@ async fn rejects_alpn_mismatch() {
     let (port, _rx) = spawn_server(resp.serialize(), "http/1.1").await;
     let result = fetch(&localhost_url(port), true).await;
     assert!(result.is_err(), "fetch must fail when ALPN is not sonion/1");
-    assert!(!matches!(result, Ok(_))); 
 }

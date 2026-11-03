@@ -1,15 +1,21 @@
-use sonion_protocol::{ProtocolError, Request, Response, Status, limits};
+use sonion_protocol::{limits, ProtocolError, Request, Response, Status};
 
 #[test]
 fn request_line_at_exact_limit_ok() {
-    let line = format!("GET /{} SONION/1.0", "a".repeat(limits::MAX_REQUEST_LINE - 16));
+    let line = format!(
+        "GET /{} SONION/1.0",
+        "a".repeat(limits::MAX_REQUEST_LINE - 16)
+    );
     assert_eq!(line.len(), limits::MAX_REQUEST_LINE);
     let wire = format!("{line}\r\n\r\n");
     assert!(Request::parse(wire.as_bytes()).is_ok());
 }
 #[test]
 fn request_line_one_over_limit_err() {
-    let line = format!("GET /{} SONION/1.0", "a".repeat(limits::MAX_REQUEST_LINE - 15));
+    let line = format!(
+        "GET /{} SONION/1.0",
+        "a".repeat(limits::MAX_REQUEST_LINE - 15)
+    );
     assert_eq!(line.len(), limits::MAX_REQUEST_LINE + 1);
     let wire = format!("{line}\r\n\r\n");
     assert!(matches!(
@@ -21,7 +27,7 @@ fn request_line_one_over_limit_err() {
 fn headers_at_exact_limit_ok() {
     let max = limits::MAX_REQUEST_LINE + limits::MAX_HEADERS;
     let line = "GET / SONION/1.0";
-    let hlen = max - line.len() - 2; 
+    let hlen = max - line.len() - 2;
     let headers = format!("X: {}", "a".repeat(hlen - 3));
     let wire = format!("{line}\r\n{headers}\r\n\r\n");
     assert!(Request::parse(wire.as_bytes()).is_ok());
@@ -76,7 +82,7 @@ fn chunk_size_hex_overflow_is_rejected_not_panic() {
     let wire = b"SONION/1.0 200 ok\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\nffffffffffffffff\r\ny\r\n0\r\n\r\n";
     let result = std::panic::catch_unwind(|| Response::parse(wire));
     match result {
-        Ok(Err(_)) => {} 
+        Ok(Err(_)) => {}
         Ok(Ok(_)) => panic!("a u64::MAX chunk size must not parse"),
         Err(_) => panic!(
             "PANIC on huge chunk size: integer overflow in chunk accounting — use checked arithmetic"
@@ -196,22 +202,34 @@ fn parse_post_body_at_limit_ok() {
 }
 #[test]
 fn parse_rejects_oversized_declared_body() {
-    let wire = format!("POST / SONION/1.0\r\nContent-Length: {} \r\n\r\n", limits::MAX_BODY + 1);
-    assert!(matches!(Request::parse(wire.as_bytes()), Err(ProtocolError::BodyTooLarge {..})));
+    let wire = format!(
+        "POST / SONION/1.0\r\nContent-Length: {} \r\n\r\n",
+        limits::MAX_BODY + 1
+    );
+    assert!(matches!(
+        Request::parse(wire.as_bytes()),
+        Err(ProtocolError::BodyTooLarge { .. })
+    ));
 }
 #[test]
 fn parse_rejects_short_body() {
     let wire = b"POST / SONION/1.0\r\nContent-Length: 10\r\n\r\nabc";
-    assert!(matches!(Request::parse(wire), Err(ProtocolError::UnexpectedEof)));
+    assert!(matches!(
+        Request::parse(wire),
+        Err(ProtocolError::UnexpectedEof)
+    ));
 }
 #[test]
 fn parse_rejects_bad_content_length() {
     let wire = b"POST / SONION/1.0\r\nContent-Length: abc\r\n\r\nhello";
-    assert!(matches!(Request::parse(wire), Err(ProtocolError::InvalidHeader(_))));
+    assert!(matches!(
+        Request::parse(wire),
+        Err(ProtocolError::InvalidHeader(_))
+    ));
 }
 #[test]
 fn parse_ignores_extra_bytes_past_content_length() {
-    let wire =  b"POST / SONION/1.0\r\nContent-Length: 3\r\n\r\naaaaaa";
+    let wire = b"POST / SONION/1.0\r\nContent-Length: 3\r\n\r\naaaaaa";
     let req = Request::parse(wire).unwrap();
     assert_eq!(req.body, b"aaa")
 }

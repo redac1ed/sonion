@@ -1,5 +1,5 @@
 use sonion_protocol::{Request, Response};
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 const ITERATIONS: usize = 50_000;
 
@@ -7,7 +7,7 @@ struct Rng(u64);
 
 impl Rng {
     fn new(seed: u64) -> Self {
-        Rng(seed | 1) 
+        Rng(seed | 1)
     }
     fn next(&mut self) -> u64 {
         let mut x = self.0;
@@ -53,7 +53,7 @@ fn bases() -> Vec<Vec<u8>> {
         "request-get-simple.txt",
         "response-200.txt",
         "response-404.txt",
-        "response-chunked.txt"
+        "response-chunked.txt",
     ] {
         let path = format!("{}/../../tests/golden/{name}", env!("CARGO_MANIFEST_DIR"));
         let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
@@ -106,7 +106,7 @@ fn mutate(rng: &mut Rng, base: &[u8]) -> Vec<u8> {
                     .collect();
                 if !positions.is_empty() {
                     let i = positions[rng.below(positions.len())];
-                    m.remove(i); 
+                    m.remove(i);
                 }
             }
         }
@@ -118,7 +118,7 @@ fn mutate(rng: &mut Rng, base: &[u8]) -> Vec<u8> {
 fn mutation_fuzz_parsers_never_panic() {
     let bases = bases();
     let mut rng = Rng::new(0x5057_4E47_2026_0924);
-    for i in 0..ITERATIONS { 
+    for i in 0..ITERATIONS {
         let base = &bases[rng.below(bases.len())];
         let m = mutate(&mut rng, base);
         if catch_unwind(AssertUnwindSafe(|| Request::parse(&m))).is_err() {
@@ -140,7 +140,8 @@ fn parsed_values_roundtrip_stable() {
         let m = mutate(&mut rng, base);
         if let Ok(req) = Request::parse(&m) {
             let wire = req.serialize();
-            let req2 = Request::parse(&wire).expect("re-parse of a serialized request must succeed");
+            let req2 =
+                Request::parse(&wire).expect("re-parse of a serialized request must succeed");
             assert_eq!(req, req2, "request roundtrip mismatch");
             checked += 1;
         }
@@ -154,8 +155,8 @@ fn parsed_values_roundtrip_stable() {
                 assert!(resp2.is_chunked());
             } else {
                 let wire = resp.serialize();
-                let resp2 = Response::parse(&wire)
-                    .expect("re-parse of a serialized response must succeed");
+                let resp2 =
+                    Response::parse(&wire).expect("re-parse of a serialized response must succeed");
                 assert_eq!(resp, resp2, "response roundtrip mismatch");
             }
             checked += 1;

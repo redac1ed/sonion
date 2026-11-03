@@ -10,16 +10,16 @@ pub struct Settings {
     pub registry: String,
     pub pin_key: Option<String>,
     pub insecure_dev: bool,
-    pub homepage: String
+    pub homepage: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             registry: DEFAULT_REGISTRY.to_string(),
-            pin_key: None, 
+            pin_key: None,
             insecure_dev: false,
-            homepage: "sonion://domains.son/#/sites".to_string()
+            homepage: "sonion://domains.son/#/sites".to_string(),
         }
     }
 }
@@ -33,7 +33,7 @@ impl Settings {
         let raw = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(e) => return Err(SettingsError::Io(e))
+            Err(e) => return Err(SettingsError::Io(e)),
         };
         let s: Settings = serde_json::from_str(&raw).map_err(SettingsError::Json)?;
         Ok(s)
@@ -58,20 +58,22 @@ impl Settings {
 }
 
 fn config_dir() -> PathBuf {
-    let base = std::env::var_os("APPDATA").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+    let base = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
         .unwrap_or_else(|| PathBuf::from("."));
     base.join("sonion")
 }
 
 pub fn default_pin_for(registry: &str) -> Option<String> {
-    (registry.trim().trim_end_matches('/') == DEFAULT_REGISTRY).then(|| DEFAULT_REGISTRY_KEY.to_string())
+    (registry.trim().trim_end_matches('/') == DEFAULT_REGISTRY)
+        .then(|| DEFAULT_REGISTRY_KEY.to_string())
 }
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("invalid config json: {0}")]
-    Json(#[from] serde_json::Error)
+    Json(#[from] serde_json::Error),
 }

@@ -2,7 +2,9 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sonion_protocol::date::{format_http_date, parse_http_date};
 use sonion_protocol::head::find_header_end;
 use sonion_protocol::ratelimit::RateLimiter;
-use sonion_protocol::{ALPN, ProtocolError, Request, Response, Status, limits, system_time_to_unix};
+use sonion_protocol::{
+    ALPN, ProtocolError, Request, Response, Status, limits, system_time_to_unix,
+};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -42,8 +44,8 @@ pub struct Server {
 }
 
 struct Site {
-    root: PathBuf, 
-    proxy: Option<String>, 
+    root: PathBuf,
+    proxy: Option<String>,
     limiter: RateLimiter,
 }
 
@@ -67,7 +69,7 @@ impl Server {
             acceptor: TlsAcceptor::from(Arc::new(config)),
             listener,
             proxy: None,
-            limiter: RateLimiter::new(RATE_BURST, RATE_PER_SEC)
+            limiter: RateLimiter::new(RATE_BURST, RATE_PER_SEC),
         })
     }
     pub fn with_proxy(mut self, upstream: impl Into<String>) -> Self {
@@ -133,13 +135,16 @@ async fn handle_conn(
             Instant::now() + IDLE_TIMEOUT
         };
         let request = match read_request(&mut tls, &mut buf, deadline, max_head).await? {
-            Some(r) => r, 
-            None => return Ok(())
+            Some(r) => r,
+            None => return Ok(()),
         };
         served += 1;
         let started = Instant::now();
-        let client_close = served >= MAX_KEEPALIVE_REQUESTS || request.get_header("Connection")
-            .map(|v| v.eq_ignore_ascii_case("close")).unwrap_or(false);
+        let client_close = served >= MAX_KEEPALIVE_REQUESTS
+            || request
+                .get_header("Connection")
+                .map(|v| v.eq_ignore_ascii_case("close"))
+                .unwrap_or(false);
         if let Err(wait) = site.limiter.try_acquire(peer) {
             let mut resp = simple(Status::TooManyRequests, b"too many requests");
             resp.set_header("Retry-After", wait.as_secs().to_string());
@@ -159,7 +164,8 @@ async fn handle_conn(
                 resp
             }
             (None, _) => {
-                let mut resp = error_page(root, Status::MethodNotAllowed, b"method not allowed").await;
+                let mut resp =
+                    error_page(root, Status::MethodNotAllowed, b"method not allowed").await;
                 resp.set_header("Allow", STATIC_ALLOW);
                 write_response(&mut tls, &request, resp, true).await?;
                 info!(method = %request.method, path = %request.path, status = 405, elapsed_us = &started.elapsed().as_micros(), "response");
@@ -181,8 +187,8 @@ async fn read_request<S>(
     buf: &mut Vec<u8>,
     deadline: Instant,
     max_head: usize,
-) -> anyhow::Result<Option<Request>> 
-where 
+) -> anyhow::Result<Option<Request>>
+where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
 {
     loop {
@@ -202,7 +208,7 @@ where
                 write_simple(tls, Status::BadRequest, b"incomplete request").await?;
                 return Ok(None);
             }
-            Ok(Ok(n)) => n, 
+            Ok(Ok(n)) => n,
             Ok(Err(e)) => return Err(e.into()),
             Err(_) => {
                 if buf.is_empty() {
@@ -253,7 +259,8 @@ where
 
 fn request_wire_len(buf: &[u8], req: &Request) -> usize {
     let head_end = find_header_end(buf).map(|p| p + 4).unwrap_or(buf.len());
-    let body_len = req.get_header("Content-Length")
+    let body_len = req
+        .get_header("Content-Length")
         .and_then(|v| v.trim().parse::<usize>().ok())
         .unwrap_or(0);
     (head_end + body_len).min(buf.len())
@@ -268,7 +275,8 @@ async fn write_response<S: AsyncWriteExt + Unpin>(
     if closing {
         response.set_header("Connection", "close");
     }
-    let head_only = request.method == "HEAD" || matches!(response.status, Status::NotModified | Status::NoContent);
+    let head_only = request.method == "HEAD"
+        || matches!(response.status, Status::NotModified | Status::NoContent);
     let wire = if head_only {
         response.serialize_head()
     } else if response.body.len() > CHUNK_THRESHOLD {
@@ -301,7 +309,9 @@ async fn build_response(root: &Path, request: &Request) -> Response {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return not_found_response(root, raw_path).await;
         }
-        Err(_) => return error_page(root, Status::InternalServerError, b"internal server error").await
+        Err(_) => {
+            return error_page(root, Status::InternalServerError, b"internal server error").await;
+        }
     };
     if !md.is_file() {
         return not_found_response(root, raw_path).await;
@@ -310,14 +320,13 @@ async fn build_response(root: &Path, request: &Request) -> Response {
         return error_page(root, Status::PayloadTooLarge, b"payload too large").await;
     }
     let mtime = md.modified().map(system_time_to_unix).unwrap_or(0);
-    if let Some(ims) = request.get_header("If-Modified-Since") {
-        if let Some(since) = parse_http_date(ims) {
-            if mtime <= since {
-                let mut resp = Response::new(Status::NotModified, Vec::new());
-                resp.set_header("Last-Modified", format_http_date(mtime));
-                return resp;
-            }
-        }
+    if let Some(ims) = request.get_header("If-Modified-Since")
+        && let Some(since) = parse_http_date(ims)
+        && mtime <= since
+    {
+        let mut resp = Response::new(Status::NotModified, Vec::new());
+        resp.set_header("Last-Modified", format_http_date(mtime));
+        return resp;
     }
     match tokio::fs::read(&path).await {
         Ok(body) => {
@@ -329,7 +338,7 @@ async fn build_response(root: &Path, request: &Request) -> Response {
             resp.set_header("Last-Modified", format_http_date(mtime));
             resp
         }
-        Err(_) => error_page(root, Status::InternalServerError, b"internal server error").await
+        Err(_) => error_page(root, Status::InternalServerError, b"internal server error").await,
     }
 }
 
@@ -349,21 +358,21 @@ async fn not_found_response(root: &Path, raw_path: &str) -> Response {
                 }
                 resp
             }
-            Err(_) => error_page(root, Status::NotFound, b"not found").await
+            Err(_) => error_page(root, Status::NotFound, b"not found").await,
         }
     }
 }
 
 async fn error_page(root: &Path, status: Status, fallback: &[u8]) -> Response {
     let custom = root.join(format!("{}.html", status.code()));
-    if let Ok(body) = tokio::fs::read(&custom).await {
-        if body.len() <= limits::MAX_BODY {
-            let mut resp = Response::new(status, body);
-            resp.set_header("Content-Type", "text/html");
-            return resp;
-        }
+    if let Ok(body) = tokio::fs::read(&custom).await
+        && body.len() <= limits::MAX_BODY
+    {
+        let mut resp = Response::new(status, body);
+        resp.set_header("Content-Type", "text/html");
+        return resp;
     }
-    simple(status,fallback)
+    simple(status, fallback)
 }
 
 fn resolve_path(root: &Path, request_path: &str) -> Option<PathBuf> {

@@ -35,10 +35,18 @@ async fn end_to_end_named_fetch() {
     tokio::spawn(reg_srv.run());
     let reg_url = SonionUrl::parse(&format!("sonion://localhost:{reg_port}/")).unwrap();
     let client = registry::client::RegistryClient::new(reg_url.clone(), true);
-    client.create_account("tester", "hunter2pass").await.unwrap();
+    client
+        .create_account("tester", "hunter2pass")
+        .await
+        .unwrap();
     let key = client.login("tester", "hunter2pass").await.unwrap();
     client
-        .put_domain(&key, "browsertest.son", &[format!("127.0.0.1:{site_port}")], None)
+        .put_domain(
+            &key,
+            "browsertest.son",
+            &[format!("127.0.0.1:{site_port}")],
+            None,
+        )
         .await
         .unwrap();
     let stack = NetStack::new(Some(reg_url), None, true);

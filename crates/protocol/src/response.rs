@@ -1,5 +1,6 @@
 use crate::{
-    ProtocolError, head::{CRLF, VERSION, find_header_end, parse_headers}, limits,
+    head::{find_header_end, parse_headers, CRLF, VERSION},
+    limits, ProtocolError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,7 +137,14 @@ impl Status {
         (200..300).contains(&self.code())
     }
     pub fn is_redirect(self) -> bool {
-        matches!(self, Status::MovedPermanently | Status::Found | Status::SeeOther | Status::TemporaryRedirect | Status::PermanentRedirect)
+        matches!(
+            self,
+            Status::MovedPermanently
+                | Status::Found
+                | Status::SeeOther
+                | Status::TemporaryRedirect
+                | Status::PermanentRedirect
+        )
     }
     pub fn is_client_error(self) -> bool {
         (400..500).contains(&self.code())
@@ -174,7 +182,7 @@ impl Response {
             "header value must not contain CR or LF"
         );
         self.headers.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
-        self.headers.push((name, value.into()));
+        self.headers.push((name, value));
     }
     pub fn get_header(&self, name: &str) -> Option<&str> {
         self.headers
@@ -330,7 +338,10 @@ fn parse_chunked_body(bytes: &[u8]) -> Result<Vec<u8>, ProtocolError> {
             }
             return Ok(body);
         }
-        if size.checked_add(body.len()).is_none_or(|t| t > limits::MAX_BODY) {
+        if size
+            .checked_add(body.len())
+            .is_none_or(|t| t > limits::MAX_BODY)
+        {
             return Err(ProtocolError::BodyTooLarge {
                 max: limits::MAX_BODY,
             });

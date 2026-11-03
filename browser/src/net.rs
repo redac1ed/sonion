@@ -2,19 +2,33 @@ use registry::client::SonionResolver;
 use sonion_protocol::{Client, Request, Response, SonionUrl};
 use std::sync::Arc;
 
-const SKIP_REQUEST_HEADERS: &[&str] = &["host", "connection", "content-length", "transfer-encoding", "keep-alive", "upgrade"];
-const SKIP_RESPONSE_HEADERS: &[&str] = &["host", "connection", "content-length", "transfer-encoding", "keep-alive", "upgrade"];
+const SKIP_REQUEST_HEADERS: &[&str] = &[
+    "host",
+    "connection",
+    "content-length",
+    "transfer-encoding",
+    "keep-alive",
+    "upgrade",
+];
+const SKIP_RESPONSE_HEADERS: &[&str] = &[
+    "host",
+    "connection",
+    "content-length",
+    "transfer-encoding",
+    "keep-alive",
+    "upgrade",
+];
 
 pub struct NetStack {
     resolver: SonionResolver,
-    client: Client, 
+    client: Client,
 }
 
 pub struct OutgoingRequest {
     pub method: String,
-    pub url: String, 
+    pub url: String,
     pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>
+    pub body: Vec<u8>,
 }
 
 impl OutgoingRequest {
@@ -23,7 +37,7 @@ impl OutgoingRequest {
             method: "GET".into(),
             url: url.to_string(),
             headers: Vec::new(),
-            body: Vec::new()
+            body: Vec::new(),
         }
     }
 }
@@ -32,7 +46,7 @@ pub struct FetchedPage {
     pub status: u16,
     pub content_type: String,
     pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>
+    pub body: Vec<u8>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -42,26 +56,26 @@ pub enum FetchError {
     #[error("resolve failed: {0}")]
     Resolve(#[from] registry::client::ResolveError),
     #[error("request failed: {0}")]
-    Request(#[from] sonion_protocol::ClientError)
+    Request(#[from] sonion_protocol::ClientError),
 }
 
 impl NetStack {
     pub fn new(registry: Option<SonionUrl>, pin_key: Option<String>, insecure_dev: bool) -> Self {
         let resolver = match registry {
-            Some(base) => SonionResolver::new(base, insecure_dev, pin_key), 
+            Some(base) => SonionResolver::new(base, insecure_dev, pin_key),
             None => SonionResolver::new(
                 SonionUrl {
                     host: "127.0.0.1".into(),
                     port: 6768,
                     path: "/".into(),
-                    query: None
-                }, 
-                insecure_dev, 
-                pin_key
+                    query: None,
+                },
+                insecure_dev,
+                pin_key,
             ),
         };
         Self {
-            resolver, 
+            resolver,
             client: Client::new(insecure_dev),
         }
     }
@@ -69,20 +83,28 @@ impl NetStack {
         self.fetch(OutgoingRequest::get(url)).await
     }
     pub async fn fetch(&self, outgoing: OutgoingRequest) -> Result<FetchedPage, FetchError> {
-        let parsed = SonionUrl::parse(&outgoing.url).map_err(|e| FetchError::BadUrl(e.to_string()))?;
+        let parsed =
+            SonionUrl::parse(&outgoing.url).map_err(|e| FetchError::BadUrl(e.to_string()))?;
         let resp = if is_domain_name(&parsed.host) {
             let rec = self.resolver.resolve(&parsed.host).await?;
             let mut last = None;
             let mut out = None;
             for ep in &rec.endpoints {
-                let Some(target) = registry::client::endpoint_url(ep, &parsed.encoded_path()) else { continue; };
+                let Some(target) = registry::client::endpoint_url(ep, &parsed.encoded_path())
+                else {
+                    continue;
+                };
                 let req = build_request(&outgoing, &target.encoded_path(), &parsed.host);
-                match self.client.send_pinned(&target, &req, rec.cert_sha256.as_deref()).await {
+                match self
+                    .client
+                    .send_pinned(&target, &req, rec.cert_sha256.as_deref())
+                    .await
+                {
                     Ok(r) => {
                         out = Some(r);
                         break;
                     }
-                    Err(e) => last = Some(e)
+                    Err(e) => last = Some(e),
                 }
             }
             match out {
@@ -90,7 +112,7 @@ impl NetStack {
                 None => {
                     self.resolver.invalidate(&parsed.host);
                     return Err(FetchError::Request(
-                        last.unwrap_or(sonion_protocol::ClientError::Timeout("all endpoints"))
+                        last.unwrap_or(sonion_protocol::ClientError::Timeout("all endpoints")),
                     ));
                 }
             }
@@ -108,7 +130,7 @@ impl NetStack {
 fn build_request(outgoing: &OutgoingRequest, path: &str, host: &str) -> Request {
     let mut req = Request::new(&outgoing.method, path).header("Host", host);
     for (name, value) in &outgoing.headers {
-        let bad = name.contains(|c: char| c == ':' || c == '\r' || c == '\n') || value.contains(|c: char| c == '\r' || c == '\n');
+        let bad = name.contains([':', '\r', '\n']) || value.contains(['\r', '\n']);
         if bad || SKIP_REQUEST_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
             continue;
         }
@@ -122,18 +144,27 @@ pub fn is_domain_name(host: &str) -> bool {
     !host.is_empty()
         && host != "localhost"
         && host.parse::<std::net::IpAddr>().is_err()
-        && host.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
 }
 
 fn page_from_response(resp: Response) -> FetchedPage {
-    let content_type = resp.get_header("Content-Type").unwrap_or("application/octet-stream").to_string();
-    let headers = resp.headers.iter()
-        .filter(|(n, _)| !SKIP_RESPONSE_HEADERS.contains(&n.to_ascii_lowercase().as_str())).cloned().collect();
+    let content_type = resp
+        .get_header("Content-Type")
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let headers = resp
+        .headers
+        .iter()
+        .filter(|(n, _)| !SKIP_RESPONSE_HEADERS.contains(&n.to_ascii_lowercase().as_str()))
+        .cloned()
+        .collect();
     FetchedPage {
         status: resp.status.code(),
         content_type,
         headers,
-        body: resp.body
+        body: resp.body,
     }
 }
 

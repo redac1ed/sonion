@@ -8,7 +8,16 @@ use tokio::time::{Instant, timeout, timeout_at};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
-const HOP_BY_HOP: &[&str] = &["connection", "keep-alive", "proxy-connection", "transfer-encoding", "content-length", "te", "trailer", "upgrade"];
+const HOP_BY_HOP: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "transfer-encoding",
+    "content-length",
+    "te",
+    "trailer",
+    "upgrade",
+];
 
 pub async fn forward(upstream: &str, req: &Request, peer: IpAddr) -> Response {
     match exchange(upstream, req, peer).await {
@@ -22,16 +31,20 @@ pub async fn forward(upstream: &str, req: &Request, peer: IpAddr) -> Response {
 }
 
 async fn exchange(upstream: &str, req: &Request, peer: IpAddr) -> Result<Response, Status> {
-    let mut tcp = timeout(CONNECT_TIMEOUT, TcpStream::connect(upstream)).await
+    let mut tcp = timeout(CONNECT_TIMEOUT, TcpStream::connect(upstream))
+        .await
         .map_err(|_| Status::GatewayTimeout)?
         .map_err(|_| Status::BadGateway)?;
-    tcp.write_all(&http_request(req, peer)).await.map_err(|_| Status::BadGateway)?;
+    tcp.write_all(&http_request(req, peer))
+        .await
+        .map_err(|_| Status::BadGateway)?;
     let deadline = Instant::now() + RESPONSE_TIMEOUT;
     let cap = limits::MAX_HEADERS + limits::MAX_BODY;
     let mut buf = Vec::with_capacity(16 * 1024);
     let mut tmp = [0u8; 16 * 1024];
     loop {
-        let n = timeout_at(deadline, tcp.read(&mut tmp)).await
+        let n = timeout_at(deadline, tcp.read(&mut tmp))
+            .await
             .map_err(|_| Status::GatewayTimeout)?
             .map_err(|_| Status::BadGateway)?;
         if n == 0 {
@@ -81,11 +94,18 @@ fn parse_http_response(buf: &[u8], head_only: bool, upstream: &str) -> Option<Re
     }
     let code: u16 = parts.next()?.parse().ok()?;
     let headers = parse_headers(lines).ok()?;
-    let header = |name: &str| headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str());
+    let header = |name: &str| {
+        headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    };
     let raw = &buf[header_end + 4..];
     let body = if head_only || matches!(code, 100..=199 | 204 | 304) {
         Vec::new()
-    } else if header("Transfer-Encoding").is_some_and(|v| v.to_ascii_lowercase().contains("chunked")) {
+    } else if header("Transfer-Encoding")
+        .is_some_and(|v| v.to_ascii_lowercase().contains("chunked"))
+    {
         decode_chunked(raw)?
     } else if let Some(len) = header("Content-Length") {
         raw.get(..len.trim().parse::<usize>().ok()?)?.to_vec()
@@ -99,22 +119,31 @@ fn parse_http_response(buf: &[u8], head_only: bool, upstream: &str) -> Option<Re
         if HOP_BY_HOP.contains(&lower.as_str()) {
             continue;
         }
-        let value = if lower == "location" { same_origin_path(value, upstream) } else { value.clone() };
+        let value = if lower == "location" {
+            same_origin_path(value, upstream)
+        } else {
+            value.clone()
+        };
         resp.headers.push((name.clone(), value));
     }
-    if head_only {
-        if let Some(len) = upstream_len {
-            resp.set_header("Content-Length", len);
-        }
+    if head_only && let Some(len) = upstream_len {
+        resp.set_header("Content-Length", len);
     }
     Some(resp)
 }
 
 fn same_origin_path(location: &str, upstream: &str) -> String {
-    location.strip_prefix("http://")
+    location
+        .strip_prefix("http://")
         .and_then(|rest| rest.strip_prefix(upstream))
         .filter(|path| path.is_empty() || path.starts_with('/'))
-        .map(|path| if path.is_empty() { "/".to_string() } else { path.to_string() })
+        .map(|path| {
+            if path.is_empty() {
+                "/".to_string()
+            } else {
+                path.to_string()
+            }
+        })
         .unwrap_or_else(|| location.to_string())
 }
 

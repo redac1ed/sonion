@@ -1,4 +1,4 @@
-use sonion_protocol::{SonionUrl, parse_query};
+use sonion_protocol::{parse_query, SonionUrl};
 
 #[test]
 fn query_parsed_and_reencoded() {
@@ -28,7 +28,7 @@ fn question_mark_in_query_preserved() {
 fn parse_query_handles_flags_and_dupes() {
     let pairs = parse_query("a=1&a=2&flag&b=");
     assert_eq!(
-        pairs, 
+        pairs,
         vec![
             ("a".to_string(), "1".to_string()),
             ("a".to_string(), "2".to_string()),
@@ -52,5 +52,5 @@ fn authority_with_port_and_query() {
 #[test]
 fn default_port_authority_omits_port() {
     let u = SonionUrl::parse("sonion://h/").unwrap();
-    assert_eq!(u.authority(),"h");
+    assert_eq!(u.authority(), "h");
 }

@@ -9,8 +9,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, timeout_at, Instant};
-use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
+use tokio_rustls::TlsConnector;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HEAD_TIMEOUT: Duration = Duration::from_secs(15);
@@ -38,27 +38,36 @@ pub enum ClientError {
     #[error("too many redirects (limits {0})")]
     TooManyRedirects(usize),
     #[error("redirect without Location header")]
-    RedirectMissingLocation
+    RedirectMissingLocation,
 }
 
-async fn connect(url: &SonionUrl, insecure_dev: bool, cert_sha256: Option<&str>) -> Result<TlsConn, ClientError> {
-    let tcp = timeout(CONNECT_TIMEOUT, TcpStream::connect((url.host.as_str(), url.port))).await
-        .map_err(|_| ClientError::Timeout("connect"))??;
+async fn connect(
+    url: &SonionUrl,
+    insecure_dev: bool,
+    cert_sha256: Option<&str>,
+) -> Result<TlsConn, ClientError> {
+    let tcp = timeout(
+        CONNECT_TIMEOUT,
+        TcpStream::connect((url.host.as_str(), url.port)),
+    )
+    .await
+    .map_err(|_| ClientError::Timeout("connect"))??;
     let config = match cert_sha256 {
         Some(pin) if !insecure_dev => pinned_client_config(pin),
-        _ => client_config(insecure_dev)
+        _ => client_config(insecure_dev),
     };
     let connector = TlsConnector::from(Arc::new(config));
     let server_name = ServerName::try_from(url.host.clone())
         .map_err(|_| ClientError::BadServerName(url.host.clone()))?;
-    let tls = timeout(CONNECT_TIMEOUT, connector.connect(server_name, tcp)).await
+    let tls = timeout(CONNECT_TIMEOUT, connector.connect(server_name, tcp))
+        .await
         .map_err(|_| ClientError::Timeout("tls handshake"))?
         .map_err(|e| ClientError::Tls(e.to_string()))?;
     let negotiated = tls.get_ref().1.alpn_protocol().map(|p| p.to_vec());
     match negotiated.as_deref() {
         Some(p) if p == ALPN.as_bytes() => Ok(tls),
         other => Err(ClientError::AlpnMismatch(
-            other.map(|p| String::from_utf8_lossy(p).into_owned())
+            other.map(|p| String::from_utf8_lossy(p).into_owned()),
         )),
     }
 }
@@ -66,11 +75,11 @@ async fn connect(url: &SonionUrl, insecure_dev: bool, cert_sha256: Option<&str>)
 async fn send_on(
     tls: &mut TlsConn,
     buf: &mut Vec<u8>,
-    request: &Request
+    request: &Request,
 ) -> Result<Response, ClientError> {
     let write_err = match tls.write_all(&request.serialize()).await {
         Ok(()) => tls.flush().await.err(),
-        Err(e) => Some(e)
+        Err(e) => Some(e),
     };
     buf.clear();
     let head_deadline = Instant::now() + HEAD_TIMEOUT;
@@ -78,20 +87,24 @@ async fn send_on(
         let mut tmp = [0u8; 8192];
         match timeout_at(head_deadline, tls.read(&mut tmp)).await {
             Ok(Ok(0)) | Ok(Err(_)) | Err(_) => return Err(ClientError::Io(e)),
-            Ok(Ok(n)) => buf.extend_from_slice(&tmp[..n])
+            Ok(Ok(n)) => buf.extend_from_slice(&tmp[..n]),
         }
     }
     let max_head = limits::MAX_STATUS_LINE + limits::MAX_HEADERS;
     let (body_start, framing) = loop {
         if find_header_end(buf).is_some() {
-            let mut parsed = head_framing(buf).ok_or_else(|| ProtocolError::MalformedLine("bad response head".into()))?;
+            let mut parsed = head_framing(buf)
+                .ok_or_else(|| ProtocolError::MalformedLine("bad response head".into()))?;
             if request.method == "HEAD" {
                 parsed.1 = Framing::Empty;
             }
             break parsed;
         }
         if buf.len() > max_head {
-            return Err(ProtocolError::HeadersTooLarge { max: limits::MAX_HEADERS }.into());
+            return Err(ProtocolError::HeadersTooLarge {
+                max: limits::MAX_HEADERS,
+            }
+            .into());
         }
         read_more(tls, buf, head_deadline, "response head").await?;
     };
@@ -108,7 +121,10 @@ async fn send_on(
             return Ok(resp);
         }
         if buf.len() > max_head + limits::MAX_BODY {
-            return Err(ProtocolError::BodyTooLarge { max: limits::MAX_BODY }.into());
+            return Err(ProtocolError::BodyTooLarge {
+                max: limits::MAX_BODY,
+            }
+            .into());
         }
         read_more(tls, buf, body_deadline, "response body").await?;
     }
@@ -122,13 +138,10 @@ fn wants_close(resp: &Response) -> bool {
 
 pub async fn fetch(url: &SonionUrl, insecure_dev: bool) -> Result<Response, ClientError> {
     let req = Request::get(&url.encoded_path()).header("Host", &url.host);
-    send(url, &req, insecure_dev).await 
+    send(url, &req, insecure_dev).await
 }
 
-pub async fn fetch_redirects(
-    url: &SonionUrl,
-    insecure_dev: bool
-) -> Result<Response, ClientError> {
+pub async fn fetch_redirects(url: &SonionUrl, insecure_dev: bool) -> Result<Response, ClientError> {
     let mut current = url.clone();
     let client = Client::new(insecure_dev);
     for _ in 0..MAX_REDIRECTS {
@@ -137,7 +150,9 @@ pub async fn fetch_redirects(
         if !resp.status.is_redirect() {
             return Ok(resp);
         }
-        let location = resp.get_header("Location").ok_or(ClientError::RedirectMissingLocation)?;
+        let location = resp
+            .get_header("Location")
+            .ok_or(ClientError::RedirectMissingLocation)?;
         current = resolve_redirect(&current, location)?;
     }
     Err(ClientError::TooManyRedirects(MAX_REDIRECTS))
@@ -152,7 +167,7 @@ fn resolve_redirect(base: &SonionUrl, location: &str) -> Result<SonionUrl, Clien
         let raw = format!("/{path}");
         let (raw_path, raw_query) = match raw.find('?') {
             Some(i) => (&raw[..i], Some(&raw[i + 1..])),
-            None => (raw.as_str(), None)
+            None => (raw.as_str(), None),
         };
         next.path = crate::canonicalize_path(&crate::decode_path(raw_path)?)?;
         next.query = raw_query.map(|q| q.to_string());
@@ -175,7 +190,7 @@ pub async fn send_pinned(
     url: &SonionUrl,
     request: &Request,
     insecure_dev: bool,
-    cert_sha256: Option<&str>
+    cert_sha256: Option<&str>,
 ) -> Result<Response, ClientError> {
     let mut tls = connect(url, insecure_dev, cert_sha256).await?;
     let mut buf = Vec::with_capacity(64 * 1024);
@@ -190,20 +205,25 @@ pub struct Client {
 
 struct Pooled {
     tls: TlsConn,
-    idle_since: Instant
+    idle_since: Instant,
 }
 
 impl Client {
     pub fn new(insecure_dev: bool) -> Self {
         Self {
             insecure_dev,
-            conns: Mutex::new(HashMap::new())
+            conns: Mutex::new(HashMap::new()),
         }
     }
     pub async fn send(&self, url: &SonionUrl, request: &Request) -> Result<Response, ClientError> {
         self.send_pinned(url, request, None).await
     }
-    pub async fn send_pinned(&self, url: &SonionUrl, request: &Request, cert_sha256: Option<&str>) -> Result<Response, ClientError> {
+    pub async fn send_pinned(
+        &self,
+        url: &SonionUrl,
+        request: &Request,
+        cert_sha256: Option<&str>,
+    ) -> Result<Response, ClientError> {
         let key = (url.host.clone(), url.port, cert_sha256.map(str::to_string));
         let mut buf = Vec::with_capacity(64 * 1024);
         if is_idempotent(&request.method) {
@@ -221,7 +241,14 @@ impl Client {
         self.release(key, tls, &buf, request, &resp).await;
         Ok(resp)
     }
-    async fn release(&self, key: PoolKey, tls: TlsConn, leftover: &[u8], request: &Request, resp: &Response) {
+    async fn release(
+        &self,
+        key: PoolKey,
+        tls: TlsConn,
+        leftover: &[u8],
+        request: &Request,
+        resp: &Response,
+    ) {
         if leftover.is_empty() && !wants_close(resp) && request_wants_keep_alive(request) {
             self.put(key, tls).await;
         }
@@ -239,8 +266,8 @@ impl Client {
     async fn put(&self, key: PoolKey, tls: TlsConn) {
         let mut map = self.conns.lock().await;
         map.entry(key).or_default().push(Pooled {
-            tls, 
-            idle_since: Instant::now()
+            tls,
+            idle_since: Instant::now(),
         });
     }
     pub async fn close_all(&self) {
@@ -262,13 +289,15 @@ fn is_idempotent(method: &str) -> bool {
 }
 
 fn request_wants_keep_alive(req: &Request) -> bool {
-    !req.get_header("Connection").map(|v| v.eq_ignore_ascii_case("close")).unwrap_or(false)
+    !req.get_header("Connection")
+        .map(|v| v.eq_ignore_ascii_case("close"))
+        .unwrap_or(false)
 }
 
 enum Framing {
-    Empty, 
+    Empty,
     ContentLength(usize),
-    Chunked
+    Chunked,
 }
 
 fn head_framing(buf: &[u8]) -> Option<(usize, Framing)> {
@@ -296,17 +325,17 @@ fn body_complete(buf: &[u8], body_start: usize, framing: &Framing) -> Result<boo
     }
 }
 
-fn body_consumed(buf: &[u8], body_start: usize, framing:&Framing) -> usize {
+fn body_consumed(buf: &[u8], body_start: usize, framing: &Framing) -> usize {
     match framing {
         Framing::Empty => body_start,
         Framing::ContentLength(len) => body_start + len,
         Framing::Chunked => chunked_len(&buf[body_start..])
-            .map(|n| body_start + n) 
-            .unwrap_or(buf.len())
+            .map(|n| body_start + n)
+            .unwrap_or(buf.len()),
     }
 }
 
-fn chunked_len(mut rest: &[u8]) ->  Option<usize> {
+fn chunked_len(mut rest: &[u8]) -> Option<usize> {
     let mut total = 0usize;
     loop {
         let line_end = rest.windows(2).position(|w| w == b"\r\n")?;

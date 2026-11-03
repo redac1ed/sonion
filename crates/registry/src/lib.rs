@@ -1,10 +1,12 @@
+use argon2::Argon2;
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sonion_protocol::head::find_header_end;
-use sonion_protocol::{ALPN, Request, Response, Status, limits};
 use sonion_protocol::ratelimit::RateLimiter;
+use sonion_protocol::{ALPN, Request, Response, Status, limits};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -15,8 +17,6 @@ use tokio::net::TcpListener;
 use tokio::time::{Instant, timeout_at};
 use tokio_rustls::TlsAcceptor;
 use tracing::warn;
-use argon2::Argon2;
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 
 const HEAD_TIMEOUT: Duration = Duration::from_secs(15);
 const BODY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -35,6 +35,9 @@ const WRITE_BURST: u32 = 20;
 const WRITES_PER_SEC: f64 = 20.0 / 600.0;
 const MAX_DESCRIPTION_LEN: usize = 140;
 const MAX_SITES: usize = 5000;
+const RESERVED_LABELS: &[&str] = &[
+    "admin", "api", "dash", "docs", "domains", "registry", "root", "sonion", "www",
+];
 const DEFAULT_TLDS: &str = include_str!("../../../tlds.json");
 const DOMAINS_PAGE: &str = include_str!("domains.html");
 const DOMAINS_PAGE_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -49,13 +52,13 @@ pub enum RegistryError {
     #[error("failed to load tls identity: {0}")]
     TlsIdentity(String),
     #[error("corrupt database: {0}")]
-    CorruptDb(String)
+    CorruptDb(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct Store {
     accounts: HashMap<String, Account>,
-    api_keys: HashMap<String, String>, 
+    api_keys: HashMap<String, String>,
     domains: HashMap<String, Domain>,
 }
 
@@ -63,7 +66,7 @@ struct Store {
 struct Account {
     #[serde(default)]
     salt: String,
-    password_hash: String
+    password_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,7 +84,7 @@ struct Domain {
     #[serde(default)]
     created_at: u64,
     #[serde(default)]
-    updated_at: u64
+    updated_at: u64,
 }
 
 fn default_listed() -> bool {
@@ -90,7 +93,7 @@ fn default_listed() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolveRecord {
-    pub name: String, 
+    pub name: String,
     pub endpoints: Vec<String>,
     pub expires_at: u64,
     pub ttl: u64,
@@ -98,19 +101,31 @@ pub struct ResolveRecord {
     pub signature: String,
     pub not_before: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cert_sha256: Option<String>
+    pub cert_sha256: Option<String>,
 }
 
-fn canonical_resolve(name: &str, endpoints: &[String], expires_at: u64, ttl: u64, not_before: u64, cert_sha256: Option<&str>) -> Vec<u8> {
-    let base = format!("{name}|{}|{expires_at}|{not_before}|{ttl}", endpoints.join(","));
+fn canonical_resolve(
+    name: &str,
+    endpoints: &[String],
+    expires_at: u64,
+    ttl: u64,
+    not_before: u64,
+    cert_sha256: Option<&str>,
+) -> Vec<u8> {
+    let base = format!(
+        "{name}|{}|{expires_at}|{not_before}|{ttl}",
+        endpoints.join(",")
+    );
     match cert_sha256 {
         Some(pin) => format!("{base}|{pin}").into_bytes(),
-        None => base.into_bytes()
+        None => base.into_bytes(),
     }
 }
 
 fn valid_fingerprint(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn valid_description(s: &str) -> bool {
@@ -118,7 +133,10 @@ fn valid_description(s: &str) -> bool {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn hex(b: &[u8]) -> String {
@@ -127,7 +145,10 @@ fn hex(b: &[u8]) -> String {
 
 fn hash_password(password: &str) -> Option<String> {
     let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
-    Argon2::default().hash_password(password.as_bytes(), &salt).ok().map(|h| h.to_string())
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .ok()
+        .map(|h| h.to_string())
 }
 
 fn legacy_hash(salt_hex: &str, password: &str) -> Option<String> {
@@ -146,8 +167,10 @@ fn is_legacy(acct: &Account) -> bool {
 
 fn verify_password(acct: &Account, password: &str) -> bool {
     match PasswordHash::new(&acct.password_hash) {
-        Ok(parsed) => Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok(),
-        Err(_) => legacy_hash(&acct.salt, password).is_some_and(|h| h == acct.password_hash)
+        Ok(parsed) => Argon2::default()
+            .verify_password(password.as_bytes(), &parsed)
+            .is_ok(),
+        Err(_) => legacy_hash(&acct.salt, password).is_some_and(|h| h == acct.password_hash),
     }
 }
 
@@ -164,33 +187,33 @@ fn b64_decode(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
 }
 
 pub struct Registry {
-    dir: PathBuf, 
+    dir: PathBuf,
     store: Mutex<Store>,
     signing: SigningKey,
     login_failures: Mutex<HashMap<IpAddr, LoginPenalty>>,
-    tlds: Vec<String>, 
+    tlds: Vec<String>,
     request_limit: RateLimiter,
     account_limit: RateLimiter,
-    write_limit: RateLimiter
+    write_limit: RateLimiter,
+    operator: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 struct LoginPenalty {
-    failures: u32, 
-    locked_until: u64
+    failures: u32,
+    locked_until: u64,
 }
 
 impl Registry {
     pub fn open(dir: impl AsRef<Path>) -> Result<Self, RegistryError> {
-        let dir = dir.as_ref().to_path_buf(); 
+        let dir = dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir)?;
         let db_path = dir.join("db.json");
         let store = match std::fs::read(&db_path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| {
-                RegistryError::CorruptDb(format!("{}: {e}", db_path.display()))
-            })?,
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|e| RegistryError::CorruptDb(format!("{}: {e}", db_path.display())))?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Store::default(),
-            Err(e) => return Err(RegistryError::Io(e))
+            Err(e) => return Err(RegistryError::Io(e)),
         };
         let key_path = dir.join("signing.key");
         let signing = match std::fs::read(&key_path) {
@@ -201,7 +224,7 @@ impl Registry {
                 return Err(RegistryError::CorruptDb(format!(
                     "{}: bad signing key length",
                     key_path.display()
-                )))
+                )));
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let mut sk_bytes = [0u8; 32];
@@ -209,19 +232,24 @@ impl Registry {
                 std::fs::write(&key_path, sk_bytes)?;
                 SigningKey::from_bytes(&sk_bytes)
             }
-            Err(e) => return Err(RegistryError::Io(e))
+            Err(e) => return Err(RegistryError::Io(e)),
         };
         let tlds = Self::load_tlds();
         Ok(Self {
-            dir, 
+            dir,
             store: Mutex::new(store),
             signing,
             login_failures: Mutex::new(HashMap::new()),
             tlds,
             request_limit: RateLimiter::new(RATE_BURST, RATE_PER_SEC),
             account_limit: RateLimiter::new(ACCOUNT_BURST, ACCOUNT_PER_SEC),
-            write_limit: RateLimiter::new(WRITE_BURST, WRITES_PER_SEC)
+            write_limit: RateLimiter::new(WRITE_BURST, WRITES_PER_SEC),
+            operator: None,
         })
+    }
+    pub fn with_operator(mut self, username: impl Into<String>) -> Self {
+        self.operator = Some(username.into());
+        self
     }
     pub fn verifying_key_b64(&self) -> String {
         b64_encode(self.signing.verifying_key().as_bytes())
@@ -240,20 +268,35 @@ impl Registry {
     fn create_account(&self, body: &[u8]) -> (Status, String) {
         #[derive(Deserialize)]
         struct In {
-            username: String, 
-            password: String
+            username: String,
+            password: String,
         }
         let Ok(input) = serde_json::from_slice::<In>(body) else {
             return (Status::BadRequest, err_json("bad json"));
         };
-        if !valid_label(&input.username) || input.password.len() < 8 || input.password.len() > MAX_PASSWORD_LEN {
-            return (Status::BadRequest, err_json("invalid username or password length"));
+        if !valid_label(&input.username)
+            || input.password.len() < 8
+            || input.password.len() > MAX_PASSWORD_LEN
+        {
+            return (
+                Status::BadRequest,
+                err_json("invalid username or password length"),
+            );
         }
-        if self.store.lock().unwrap().accounts.contains_key(&input.username) {
+        if self
+            .store
+            .lock()
+            .unwrap()
+            .accounts
+            .contains_key(&input.username)
+        {
             return (Status::Conflict, err_json("username already exists"));
         }
         let Some(password_hash) = hash_password(&input.password) else {
-            return (Status::InternalServerError, err_json("failed to hash password"));
+            return (
+                Status::InternalServerError,
+                err_json("failed to hash password"),
+            );
         };
         let mut store = self.store.lock().unwrap();
         if store.accounts.contains_key(&input.username) {
@@ -267,40 +310,56 @@ impl Registry {
             },
         );
         if self.save(&store).is_err() {
-            return (Status::InternalServerError, err_json("failed to save account"));
+            return (
+                Status::InternalServerError,
+                err_json("failed to save account"),
+            );
         }
         (Status::Ok, r#"{"ok":true}"#.to_string())
     }
     fn login(&self, body: &[u8], peer: Option<IpAddr>) -> (Status, String) {
         if let Some(ip) = peer {
             let penalties = self.login_failures.lock().unwrap();
-            if let Some(p) = penalties.get(&ip) {
-                if p.locked_until > now() {
-                    return (Status::TooManyRequests, err_json("too many failed logins, try again later"));
-                }
+            if let Some(p) = penalties.get(&ip)
+                && p.locked_until > now()
+            {
+                return (
+                    Status::TooManyRequests,
+                    err_json("too many failed logins, try again later"),
+                );
             }
         }
         #[derive(Deserialize)]
         struct In {
             username: String,
-            password: String
+            password: String,
         }
         let Ok(input) = serde_json::from_slice::<In>(body) else {
             return (Status::BadRequest, err_json("bad json"));
         };
-        let acct = self.store.lock().unwrap().accounts.get(&input.username).cloned();
+        let acct = self
+            .store
+            .lock()
+            .unwrap()
+            .accounts
+            .get(&input.username)
+            .cloned();
         let Some(acct) = acct else {
             self.record_login_failure(peer);
             return (Status::Unauthorized, err_json("account does not exist"));
         };
         if !verify_password(&acct, &input.password) {
             self.record_login_failure(peer);
-            return (Status::Unauthorized, err_json("wrong password"))
+            return (Status::Unauthorized, err_json("wrong password"));
         }
         if let Some(ip) = peer {
             self.login_failures.lock().unwrap().remove(&ip);
         }
-        let upgraded = if is_legacy(&acct) { hash_password(&input.password) } else { None };
+        let upgraded = if is_legacy(&acct) {
+            hash_password(&input.password)
+        } else {
+            None
+        };
         let mut store = self.store.lock().unwrap();
         if let (Some(hash), Some(stored)) = (upgraded, store.accounts.get_mut(&input.username)) {
             stored.password_hash = hash;
@@ -309,17 +368,22 @@ impl Registry {
         let mut key = [0u8; 32];
         rand::rngs::OsRng.fill_bytes(&mut key);
         let api_key = hex(&key);
-        store.api_keys.insert(sha256_hex(api_key.as_bytes()), input.username.clone());
+        store
+            .api_keys
+            .insert(sha256_hex(api_key.as_bytes()), input.username.clone());
         if self.save(&store).is_err() {
             return (Status::InternalServerError, err_json("save failed"));
         }
         (
             Status::Ok,
-            format!(r#"{{"api_key":"{api_key}","username":"{}"}}"#, input.username)
+            format!(
+                r#"{{"api_key":"{api_key}","username":"{}"}}"#,
+                input.username
+            ),
         )
     }
     fn record_login_failure(&self, peer: Option<IpAddr>) {
-        let Some(ip) = peer else {return};
+        let Some(ip) = peer else { return };
         let mut penalties = self.login_failures.lock().unwrap();
         let p = penalties.entry(ip).or_default();
         p.failures += 1;
@@ -329,7 +393,9 @@ impl Registry {
         }
     }
     fn logout(&self, req: &Request) -> (Status, String) {
-        let Some(token) = req.get_header("Authorization").and_then(|v| v.strip_prefix("Bearer "))
+        let Some(token) = req
+            .get_header("Authorization")
+            .and_then(|v| v.strip_prefix("Bearer "))
         else {
             return (Status::Unauthorized, err_json("auth required"));
         };
@@ -343,7 +409,7 @@ impl Registry {
         }
         (Status::Ok, r#"{"ok":true}"#.to_string())
     }
-    fn authed_user<'a>(&self, store: &Store, req: &'a Request) -> Option<String> {
+    fn authed_user(&self, store: &Store, req: &Request) -> Option<String> {
         let token = req.get_header("Authorization")?.strip_prefix("Bearer ")?;
         store.api_keys.get(&sha256_hex(token.as_bytes())).cloned()
     }
@@ -354,56 +420,106 @@ impl Registry {
             ttl: Option<u64>,
             cert_sha256: Option<String>,
             description: Option<String>,
-            listed: Option<bool>
+            listed: Option<bool>,
         }
         let Ok(input) = serde_json::from_slice::<In>(&req.body) else {
             return (Status::BadRequest, err_json("bad json"));
         };
         if !valid_name(name, &self.tlds) || input.endpoints.is_empty() {
-            return (Status::BadRequest, err_json("invalid domain, tld or endpoints"));
+            return (
+                Status::BadRequest,
+                err_json("invalid domain, tld or endpoints"),
+            );
         }
-        if input.endpoints.len() > MAX_ENDPOINTS || input.endpoints.iter().any(|e| !valid_endpoint(e)) {
+        if input.endpoints.len() > MAX_ENDPOINTS
+            || input.endpoints.iter().any(|e| !valid_endpoint(e))
+        {
             return (Status::BadRequest, err_json("invalid endpoints"));
         }
-        if input.cert_sha256.as_deref().is_some_and(|c| !c.is_empty() && !valid_fingerprint(c)) {
-            return (Status::BadRequest, err_json("cert fingerprint must be 64 lowercase hex characters"));
+        if input
+            .cert_sha256
+            .as_deref()
+            .is_some_and(|c| !c.is_empty() && !valid_fingerprint(c))
+        {
+            return (
+                Status::BadRequest,
+                err_json("cert fingerprint must be 64 lowercase hex characters"),
+            );
         }
-        if input.description.as_deref().is_some_and(|d| !valid_description(d)) {
-            return (Status::BadRequest, err_json("description must be one line of at most 140 characters"));
+        if input
+            .description
+            .as_deref()
+            .is_some_and(|d| !valid_description(d))
+        {
+            return (
+                Status::BadRequest,
+                err_json("description must be one line of at most 140 characters"),
+            );
         }
         let mut store = self.store.lock().unwrap();
         let Some(user) = self.authed_user(&store, req) else {
             return (Status::Unauthorized, err_json("auth required"));
         };
-        match store.domains.get(name) {
-            Some(d) if d.owner != user && d.expires_at > now() => {
-                return (Status::Conflict, err_json("domain owned by someone else"));
-            }
-            _ => {}
-        }
         let at = now();
+        let root = apex(name);
+        if root != name {
+            let owns_parent = store
+                .domains
+                .get(root)
+                .is_some_and(|p| p.owner == user && p.expires_at > at);
+            if !owns_parent {
+                return (
+                    Status::Forbidden,
+                    err_json("subdomains can only be registered by the owner of the parent domain"),
+                );
+            }
+        } else {
+            match store.domains.get(name) {
+                Some(d) if d.owner != user && d.expires_at > at => {
+                    return (Status::Conflict, err_json("domain owned by someone else"));
+                }
+                _ => {}
+            }
+            let held = store.domains.get(name).is_some_and(|d| d.owner == user);
+            if is_reserved(name) && !held && self.operator.as_deref() != Some(user.as_str()) {
+                return (Status::Forbidden, err_json("this name is reserved"));
+            }
+        }
         let expires_at = at + DOMAIN_TTL_SECS;
         let prev = store.domains.get(name).filter(|d| d.owner == user).cloned();
         let domain = Domain {
             owner: user,
             endpoints: input.endpoints,
             expires_at,
-            ttl: input.ttl.or(prev.as_ref().map(|d| d.ttl)).unwrap_or(DEFAULT_TTL_SECS).clamp(1, MAX_TTL_SECS),
+            ttl: input
+                .ttl
+                .or(prev.as_ref().map(|d| d.ttl))
+                .unwrap_or(DEFAULT_TTL_SECS)
+                .clamp(1, MAX_TTL_SECS),
             cert_sha256: match input.cert_sha256 {
                 Some(c) if c.is_empty() => None,
                 Some(c) => Some(c),
-                None => prev.as_ref().and_then(|d| d.cert_sha256.clone())
+                None => prev.as_ref().and_then(|d| d.cert_sha256.clone()),
             },
-            description: input.description.or(prev.as_ref().map(|d| d.description.clone())).unwrap_or_default(),
-            listed: input.listed.or(prev.as_ref().map(|d| d.listed)).unwrap_or(true),
+            description: input
+                .description
+                .or(prev.as_ref().map(|d| d.description.clone()))
+                .unwrap_or_default(),
+            listed: input
+                .listed
+                .or(prev.as_ref().map(|d| d.listed))
+                .unwrap_or(true),
             created_at: prev.as_ref().map_or(at, |d| d.created_at),
-            updated_at: at
+            updated_at: at,
         };
         store.domains.insert(name.to_string(), domain);
         if self.save(&store).is_err() {
             return (Status::InternalServerError, err_json("save failed"));
         }
-        (Status::Ok, format!(r#"{{"ok":true,"expires_at":{expires_at}}}"#))
+        (
+            Status::Ok,
+            format!(r#"{{"ok":true,"expires_at":{expires_at}}}"#),
+        )
     }
     fn get_domain(&self, req: &Request, name: &str) -> (Status, String) {
         let store = self.store.lock().unwrap();
@@ -429,7 +545,7 @@ impl Registry {
                 "description": d.description,
                 "listed": d.listed,
             }))
-            .unwrap()
+            .unwrap(),
         )
     }
     fn delete_domain(&self, req: &Request, name: &str) -> (Status, String) {
@@ -454,11 +570,13 @@ impl Registry {
         let Some(user) = self.authed_user(&store, req) else {
             return (Status::Unauthorized, err_json("auth required"));
         };
-        let mine: Vec<serde_json::Value> = store.domains.iter()
+        let mine: Vec<serde_json::Value> = store
+            .domains
+            .iter()
             .filter(|(_, d)| d.owner == user)
             .map(|(name, d)| {
                 serde_json::json!({
-                    "name": name, 
+                    "name": name,
                     "endpoints": d.endpoints,
                     "expires_at": d.expires_at,
                     "ttl": d.ttl,
@@ -469,14 +587,22 @@ impl Registry {
                 })
             })
             .collect();
-        (Status::Ok, serde_json::to_string(&serde_json::json!({"domains": mine})).unwrap())
+        (
+            Status::Ok,
+            serde_json::to_string(&serde_json::json!({"domains": mine})).unwrap(),
+        )
     }
     fn whois(&self, name: &str) -> (Status, String) {
         if !valid_name(name, &self.tlds) {
             return (Status::BadRequest, err_json("invalid domain or tld"));
         }
         let store = self.store.lock().unwrap();
-        let body = match store.domains.get(name).filter(|d| d.expires_at > now()) {
+        let at = now();
+        let body = match store
+            .domains
+            .get(name)
+            .filter(|d| is_live(&store, name, d, at))
+        {
             Some(d) => serde_json::json!({
                 "name": name,
                 "registered": true,
@@ -489,19 +615,24 @@ impl Registry {
                 "updated_at": d.updated_at,
                 "expires_at": d.expires_at
             }),
-            None => serde_json::json!({"name": name, "registered": false})
+            None => {
+                serde_json::json!({"name": name, "registered": false, "reserved": is_reserved(name)})
+            }
         };
         (Status::Ok, body.to_string())
     }
     fn list_sites(&self) -> (Status, String) {
         let store = self.store.lock().unwrap();
         let at = now();
-        let mut sites: Vec<(&String, &Domain)> = store.domains.iter()
-            .filter(|(_, d)| d.listed && d.expires_at > at)
+        let mut sites: Vec<(&String, &Domain)> = store
+            .domains
+            .iter()
+            .filter(|(name, d)| d.listed && is_live(&store, name, d, at))
             .collect();
         sites.sort_by(|a, b| a.0.cmp(b.0));
         sites.truncate(MAX_SITES);
-        let sites: Vec<serde_json::Value> = sites.into_iter()
+        let sites: Vec<serde_json::Value> = sites
+            .into_iter()
             .map(|(name, d)| serde_json::json!({"name": name, "description": d.description}))
             .collect();
         (Status::Ok, serde_json::json!({"sites": sites}).to_string())
@@ -510,10 +641,17 @@ impl Registry {
         let store = self.store.lock().unwrap();
         let d = store.domains.get(name)?;
         let at = now();
-        if d.expires_at <= at {
+        if !is_live(&store, name, d, at) {
             return None;
         }
-        let msg = canonical_resolve(name, &d.endpoints, d.expires_at, d.ttl, at, d.cert_sha256.as_deref());
+        let msg = canonical_resolve(
+            name,
+            &d.endpoints,
+            d.expires_at,
+            d.ttl,
+            at,
+            d.cert_sha256.as_deref(),
+        );
         let sig: Signature = self.signing.sign(&msg);
         Some(ResolveRecord {
             name: name.to_string(),
@@ -522,27 +660,35 @@ impl Registry {
             not_before: at,
             ttl: d.ttl,
             key: self.verifying_key_b64(),
-            signature: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, sig.to_bytes()),
-            cert_sha256: d.cert_sha256.clone()
+            signature: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                sig.to_bytes(),
+            ),
+            cert_sha256: d.cert_sha256.clone(),
         })
     }
     fn resolve(&self, name: &str) -> (Status, String) {
         match self.resolve_record(name) {
             Some(rec) => (Status::Ok, serde_json::to_string(&rec).unwrap()),
-            None => (Status::NotFound, err_json("no such domain"))
+            None => (Status::NotFound, err_json("no such domain")),
         }
     }
     fn rate_limited(&self, req: &Request, ip: IpAddr) -> Result<(), Duration> {
         self.request_limit.try_acquire(ip)?;
         match (req.method.as_str(), req.path.as_str()) {
             ("POST", "/v1/accounts") => self.account_limit.try_acquire(ip),
-            ("PUT" | "DELETE", p) if p.starts_with("/v1/domains/") => self.write_limit.try_acquire(ip),
-            _ => Ok(())
+            ("PUT" | "DELETE", p) if p.starts_with("/v1/domains/") => {
+                self.write_limit.try_acquire(ip)
+            }
+            _ => Ok(()),
         }
     }
     fn route(&self, req: &Request, peer: Option<IpAddr>) -> Response {
         if let Some(Err(wait)) = peer.map(|ip| self.rate_limited(req, ip)) {
-            let mut resp = Response::new(Status::TooManyRequests, err_json("too many requests, slow down").into_bytes());
+            let mut resp = Response::new(
+                Status::TooManyRequests,
+                err_json("too many requests, slow down").into_bytes(),
+            );
             resp.set_header("Content-Type", "application/json");
             resp.set_header("Retry-After", wait.as_secs().to_string());
             resp.set_header("Connection", "close");
@@ -570,18 +716,14 @@ impl Registry {
             ("DELETE", p) if p.starts_with("/v1/domains/") => {
                 self.delete_domain(req, &p["/v1/domains/".len()..])
             }
-            ("GET", p) if p.starts_with("/v1/resolve/") => {
-                self.resolve(&p["/v1/resolve/".len()..])
-            }
+            ("GET", p) if p.starts_with("/v1/resolve/") => self.resolve(&p["/v1/resolve/".len()..]),
             ("GET", "/v1/key") => (
                 Status::Ok,
                 format!(r#"{{"key":"{}"}}"#, self.verifying_key_b64()),
             ),
             ("GET", "/v1/tlds") => self.list_tlds(),
             ("GET", "/v1/sites") => self.list_sites(),
-            ("GET", p) if p.starts_with("/v1/whois/") => {
-                self.whois(&p["/v1/whois/".len()..])
-            }
+            ("GET", p) if p.starts_with("/v1/whois/") => self.whois(&p["/v1/whois/".len()..]),
             _ => (Status::NotFound, err_json("unknown endpoint")),
         };
         let mut resp = Response::new(status, body.into_bytes());
@@ -601,10 +743,12 @@ impl Registry {
     }
     fn load_tlds() -> Vec<String> {
         let raw = match std::env::var("SONION_TLDS") {
-            Ok(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("tld config {path} missing: {e}")),
-            Err(_) => DEFAULT_TLDS.to_string()
+            Ok(path) => std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("tld config {path} missing: {e}")),
+            Err(_) => DEFAULT_TLDS.to_string(),
         };
-        let mut tlds: Vec<String> = serde_json::from_str(&raw).unwrap_or_else(|e| panic!("tld config invalid: {e}"));
+        let mut tlds: Vec<String> =
+            serde_json::from_str(&raw).unwrap_or_else(|e| panic!("tld config invalid: {e}"));
         tlds.retain(|t| valid_tld(t));
         tlds.sort();
         tlds.dedup();
@@ -614,26 +758,28 @@ impl Registry {
         &self.tlds
     }
     fn list_tlds(&self) -> (Status, String) {
-        (Status::Ok, serde_json::to_string(&serde_json::json!({"tlds": self.tlds})).unwrap())
+        (
+            Status::Ok,
+            serde_json::to_string(&serde_json::json!({"tlds": self.tlds})).unwrap(),
+        )
     }
 }
 
 fn err_json(msg: &str) -> String {
-    format!(r#"{{"error":"{msg}"}}"#) 
+    format!(r#"{{"error":"{msg}"}}"#)
 }
 
 fn valid_label(s: &str) -> bool {
-    !s.is_empty() 
+    !s.is_empty()
         && s.len() <= 63
-        && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         && s.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric())
         && s.bytes().last().is_some_and(|b| b.is_ascii_alphanumeric())
 }
 
 fn valid_tld(s: &str) -> bool {
-    !s.is_empty() 
-    && s.len() <= 24
-    && s.bytes().all(|b| b.is_ascii_lowercase())
+    !s.is_empty() && s.len() <= 24 && s.bytes().all(|b| b.is_ascii_lowercase())
 }
 
 fn valid_name(s: &str, tlds: &[String]) -> bool {
@@ -641,13 +787,40 @@ fn valid_name(s: &str, tlds: &[String]) -> bool {
         return false;
     }
     let labels: Vec<&str> = s.split('.').collect();
-    if !labels.iter().all(|l| valid_label(l)) {
+    if labels.len() < 2 || !labels.iter().all(|l| valid_label(l)) {
         return false;
     }
     match labels.last() {
         Some(tld) => tlds.iter().any(|t| t == tld),
-        None => false
+        None => false,
     }
+}
+
+fn apex(name: &str) -> &str {
+    match name.rmatch_indices('.').nth(1) {
+        Some((i, _)) => &name[i + 1..],
+        None => name,
+    }
+}
+
+fn is_reserved(name: &str) -> bool {
+    apex(name) == name
+        && name
+            .split('.')
+            .next()
+            .is_some_and(|label| RESERVED_LABELS.contains(&label))
+}
+
+fn is_live(store: &Store, name: &str, d: &Domain, at: u64) -> bool {
+    if d.expires_at <= at {
+        return false;
+    }
+    let root = apex(name);
+    root == name
+        || store
+            .domains
+            .get(root)
+            .is_some_and(|p| p.owner == d.owner && p.expires_at > at)
 }
 
 fn valid_endpoint(s: &str) -> bool {
@@ -659,11 +832,21 @@ fn valid_endpoint(s: &str) -> bool {
     }
     !host.is_empty()
         && host.len() <= 253
-        && host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+}
+
+pub(crate) fn record_in_window(rec: &ResolveRecord, at_unix: u64) -> bool {
+    let stale_at = rec
+        .not_before
+        .saturating_add(rec.ttl)
+        .saturating_add(CLOCK_SKEW_SECS);
+    rec.expires_at > at_unix && rec.not_before <= at_unix + CLOCK_SKEW_SECS && at_unix <= stale_at
 }
 
 pub fn verify_record(rec: &ResolveRecord, at_unix: u64) -> bool {
-    if rec.expires_at <= at_unix || rec.not_before > at_unix + CLOCK_SKEW_SECS {
+    if !record_in_window(rec, at_unix) {
         return false;
     }
     let Ok(key_bytes) = b64_decode(&rec.key) else {
@@ -674,29 +857,37 @@ pub fn verify_record(rec: &ResolveRecord, at_unix: u64) -> bool {
     };
     let (Ok(key_arr), Ok(sig_arr)): (Result<[u8; 32], _>, Result<[u8; 64], _>) = (
         key_bytes.as_slice().try_into().map_err(|_| ()),
-        sig_bytes.as_slice().try_into().map_err(|_| ())
+        sig_bytes.as_slice().try_into().map_err(|_| ()),
     ) else {
         return false;
     };
     let Ok(vk) = VerifyingKey::from_bytes(&key_arr) else {
         return false;
     };
-    let msg = canonical_resolve(&rec.name, &rec.endpoints, rec.expires_at, rec.ttl, rec.not_before, rec.cert_sha256.as_deref());
-    vk.verify_strict(&msg, &Signature::from_bytes(&sig_arr)).is_ok()
+    let msg = canonical_resolve(
+        &rec.name,
+        &rec.endpoints,
+        rec.expires_at,
+        rec.ttl,
+        rec.not_before,
+        rec.cert_sha256.as_deref(),
+    );
+    vk.verify_strict(&msg, &Signature::from_bytes(&sig_arr))
+        .is_ok()
 }
 
 pub struct RegistryServer {
     registry: Arc<Registry>,
     acceptor: TlsAcceptor,
-    listener: TcpListener
+    listener: TcpListener,
 }
 
 impl RegistryServer {
     pub async fn bind(
-        addr: SocketAddr, 
-        registry: Registry, 
+        addr: SocketAddr,
+        registry: Registry,
         certs: Vec<rustls::pki_types::CertificateDer<'static>>,
-        key: rustls::pki_types::PrivateKeyDer<'static>
+        key: rustls::pki_types::PrivateKeyDer<'static>,
     ) -> Result<Self, RegistryError> {
         let mut config =
             rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
@@ -708,7 +899,7 @@ impl RegistryServer {
         Ok(Self {
             registry: Arc::new(registry),
             acceptor: TlsAcceptor::from(Arc::new(config)),
-            listener
+            listener,
         })
     }
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
@@ -735,7 +926,7 @@ async fn handle(
     acceptor: TlsAcceptor,
     tcp: tokio::net::TcpStream,
     registry: Arc<Registry>,
-    peer: IpAddr
+    peer: IpAddr,
 ) -> anyhow::Result<()> {
     let mut tls = tokio::time::timeout(HEAD_TIMEOUT, acceptor.accept(tcp)).await??;
     let deadline = Instant::now() + HEAD_TIMEOUT;
@@ -768,14 +959,16 @@ async fn handle(
             }
             Err(sonion_protocol::ProtocolError::UnexpectedEof) => {
                 if buf.len() > max_head + limits::MAX_BODY {
-                    let resp = Response::new(Status::PayloadTooLarge, b"payload too large".to_vec());
+                    let resp =
+                        Response::new(Status::PayloadTooLarge, b"payload too large".to_vec());
                     tls.write_all(&resp.serialize()).await?;
                     anyhow::bail!("request too large");
                 }
                 let mut tmp = [0u8; 16 * 1024];
                 let n = match timeout_at(body_deadline, tls.read(&mut tmp)).await {
                     Ok(Ok(0)) => {
-                        let resp = Response::new(Status::BadRequest, b"incomplete request".to_vec());
+                        let resp =
+                            Response::new(Status::BadRequest, b"incomplete request".to_vec());
                         tls.write_all(&resp.serialize()).await?;
                         return Ok(());
                     }
@@ -788,7 +981,7 @@ async fn handle(
                     }
                 };
                 buf.extend_from_slice(&tmp[..n]);
-            },
+            }
             Err(e) => {
                 let resp = Response::new(Status::BadRequest, b"bad request".to_vec());
                 tls.write_all(&resp.serialize()).await?;

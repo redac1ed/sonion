@@ -1,14 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use sonion_protocol::SonionUrl;
-use tao::{event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy}, window::{Window, WindowBuilder}};
-use wry::{WebContext, WebViewBuilder, WebView};
 use sonion_browser::net::{FetchError, FetchedPage, NetStack, OutgoingRequest};
 use sonion_browser::runtime::NetHandle;
+use sonion_protocol::SonionUrl;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use tao::{
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy},
+    window::{Window, WindowBuilder},
+};
+use wry::{WebContext, WebView, WebViewBuilder};
 
 const INITIAL_CHROME_HEIGHT: u32 = 114;
 const HOME_PAGE: &str = include_str!("../pages/home.html");
@@ -17,44 +21,106 @@ const INJECT_SCRIPT: &str = include_str!("../pages/inject.js");
 
 #[derive(Debug, Clone)]
 enum UserEvent {
-    CreateTab {tab_id: String, url : String},
-    SwitchTab {tab_id: String}, 
-    CloseTab {tab_id: String},
-    Navigate {tab_id: String, url: String},
-    Reload {tab_id: String}, 
-    DevTools {tab_id: String},
-    SetChromeHeight {height: u32, overlay: bool},
-    OpenExternal {url: String},
-    Zoom {tab_id: String, zoom: u32},
-    Print {tab_id: String},
+    CreateTab {
+        tab_id: String,
+        url: String,
+    },
+    SwitchTab {
+        tab_id: String,
+    },
+    CloseTab {
+        tab_id: String,
+    },
+    Navigate {
+        tab_id: String,
+        url: String,
+    },
+    Reload {
+        tab_id: String,
+    },
+    DevTools {
+        tab_id: String,
+    },
+    SetChromeHeight {
+        height: u32,
+        overlay: bool,
+    },
+    OpenExternal {
+        url: String,
+    },
+    Zoom {
+        tab_id: String,
+        zoom: u32,
+    },
+    Print {
+        tab_id: String,
+    },
     Fullscreen,
     Exit,
-    PageLoaded {tab_id: String, loading: bool},
+    PageLoaded {
+        tab_id: String,
+        loading: bool,
+    },
     Minimize,
     ToggleMaximize,
     DragWindow,
     ResizeTop,
-    SaveSettings {settings: registry::settings::Settings},
+    SaveSettings {
+        settings: registry::settings::Settings,
+    },
     NewWindow,
-    SavePage {tab_id: String},
-    Find {tab_id: String, query: String, dir: i64},
-    FindClear {tab_id: String},
-    FindResult {current: u64, total: u64},
+    SavePage {
+        tab_id: String,
+    },
+    Find {
+        tab_id: String,
+        query: String,
+        dir: i64,
+    },
+    FindClear {
+        tab_id: String,
+    },
+    FindResult {
+        current: u64,
+        total: u64,
+    },
     FindShortcut,
-    DownloadRequested {url: String, path: PathBuf},
-    DownloadFinished {id: u64, url: String, path: PathBuf, ok: bool},
-    NativeDownloadStarted {url: String, path: PathBuf},
-    NativeDownloadFinished {url: String, path: Option<PathBuf>, ok: bool},
-    OpenDownload {path: String},
-    ShowDownload {path: String},
-    OpenFromPage {tab_id: String, url: String}
+    DownloadRequested {
+        url: String,
+        path: PathBuf,
+    },
+    DownloadFinished {
+        id: u64,
+        url: String,
+        path: PathBuf,
+        ok: bool,
+    },
+    NativeDownloadStarted {
+        url: String,
+        path: PathBuf,
+    },
+    NativeDownloadFinished {
+        url: String,
+        path: Option<PathBuf>,
+        ok: bool,
+    },
+    OpenDownload {
+        path: String,
+    },
+    ShowDownload {
+        path: String,
+    },
+    OpenFromPage {
+        tab_id: String,
+        url: String,
+    },
 }
 
 struct BrowserState {
     tabs: HashMap<String, WebView>,
     active_tab: String,
     chrome_height: u32,
-    overlay: bool
+    overlay: bool,
 }
 
 impl BrowserState {
@@ -62,22 +128,23 @@ impl BrowserState {
         let scale = window.scale_factor();
         let logical = window.inner_size().to_logical::<f64>(scale);
         let base_h = self.chrome_height as f64;
-        let bar_h = if self.overlay {
-            logical.height
-        } else {
-            base_h
-        };
+        let bar_h = if self.overlay { logical.height } else { base_h };
 
         let _ = bar.set_bounds(wry::Rect {
             position: wry::dpi::Position::Logical(wry::dpi::LogicalPosition::new(0.0, 0.0)),
-            size: wry::dpi::Size::Logical(wry::dpi::LogicalSize::new(logical.width, bar_h))
+            size: wry::dpi::Size::Logical(wry::dpi::LogicalSize::new(logical.width, bar_h)),
         });
         let content_h = (logical.height - base_h).max(0.0);
         for (id, wv) in &self.tabs {
             if id == &self.active_tab {
                 let _ = wv.set_bounds(wry::Rect {
-                    position: wry::dpi::Position::Logical(wry::dpi::LogicalPosition::new(0.0, base_h)),
-                    size: wry::dpi::Size::Logical(wry::dpi::LogicalSize::new(logical.width, content_h))
+                    position: wry::dpi::Position::Logical(wry::dpi::LogicalPosition::new(
+                        0.0, base_h,
+                    )),
+                    size: wry::dpi::Size::Logical(wry::dpi::LogicalSize::new(
+                        logical.width,
+                        content_h,
+                    )),
                 });
                 let _ = wv.set_visible(true);
             } else {
@@ -88,7 +155,14 @@ impl BrowserState {
     }
 }
 
-fn spawn_tab_webview(window: &Window, web_context: &mut WebContext, net: NetHandle, initial_url: &str, tab_id: &str, proxy: EventLoopProxy<UserEvent>) -> anyhow::Result<WebView> {
+fn spawn_tab_webview(
+    window: &Window,
+    web_context: &mut WebContext,
+    net: NetHandle,
+    initial_url: &str,
+    tab_id: &str,
+    proxy: EventLoopProxy<UserEvent>,
+) -> anyhow::Result<WebView> {
     let target = to_webview_url(initial_url);
     let tid = tab_id.to_string();
     let proxy_for_ipc = proxy.clone();
@@ -106,14 +180,20 @@ fn spawn_tab_webview(window: &Window, web_context: &mut WebContext, net: NetHand
             if to_webview_url(&url) == url {
                 return true;
             }
-            let _ = proxy_for_nav.send_event(UserEvent::OpenFromPage {tab_id: tid_for_nav.clone(), url});
+            let _ = proxy_for_nav.send_event(UserEvent::OpenFromPage {
+                tab_id: tid_for_nav.clone(),
+                url,
+            });
             false
         })
         .with_new_window_req_handler(move |url, _features| {
             if to_webview_url(&url) == url {
                 return wry::NewWindowResponse::Allow;
             }
-            let _ = proxy_for_new_window.send_event(UserEvent::OpenFromPage {tab_id: tid_for_new_window.clone(), url});
+            let _ = proxy_for_new_window.send_event(UserEvent::OpenFromPage {
+                tab_id: tid_for_new_window.clone(),
+                url,
+            });
             wry::NewWindowResponse::Deny
         })
         .with_on_page_load_handler(move |event, _url| {
@@ -124,71 +204,108 @@ fn spawn_tab_webview(window: &Window, web_context: &mut WebContext, net: NetHand
             });
         })
         .with_ipc_handler(move |req| {
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(req.body()) else { return };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(req.body()) else {
+                return;
+            };
             if v.get("shortcut").and_then(|k| k.as_str()) == Some("f") {
                 let _ = proxy_for_ipc.send_event(UserEvent::FindShortcut);
             }
             if let Some(url) = v.get("open").and_then(|u| u.as_str()) {
                 if req.uri().to_string().starts_with(&home_prefix) {
-                    let _ = proxy_for_ipc.send_event(UserEvent::OpenFromPage {tab_id: tid_for_ipc.clone(), url: url.to_string()});
+                    let _ = proxy_for_ipc.send_event(UserEvent::OpenFromPage {
+                        tab_id: tid_for_ipc.clone(),
+                        url: url.to_string(),
+                    });
                 }
             }
         })
         .with_download_started_handler(move |url, path| {
             if let Some(sonion_url) = from_webview_url(&url) {
-                let _ = proxy_for_dl_start.send_event(UserEvent::DownloadRequested {url: sonion_url, path: path.clone()});
+                let _ = proxy_for_dl_start.send_event(UserEvent::DownloadRequested {
+                    url: sonion_url,
+                    path: path.clone(),
+                });
                 false
             } else {
-                let _ = proxy_for_dl_start.send_event(UserEvent::NativeDownloadStarted {url, path: path.clone()});
+                let _ = proxy_for_dl_start.send_event(UserEvent::NativeDownloadStarted {
+                    url,
+                    path: path.clone(),
+                });
                 true
             }
         })
         .with_download_completed_handler(move |url, path, ok| {
-            let _ = proxy_for_dl_done.send_event(UserEvent::NativeDownloadFinished {url, path, ok});
+            let _ =
+                proxy_for_dl_done.send_event(UserEvent::NativeDownloadFinished { url, path, ok });
         })
         .with_asynchronous_custom_protocol("sonion".into(), move |_wv, request, responder| {
-            if *request.method() == wry::http::Method::OPTIONS && request.headers().contains_key("access-control-request-method") {
-                responder.respond(preflight_response(&request));
-                return;
-            }
             let (parts, body) = request.into_parts();
             let outgoing = OutgoingRequest {
                 method: parts.method.as_str().to_string(),
                 url: parts.uri.to_string(),
-                headers: parts.headers.iter()
-                    .filter_map(|(name, value)| Some((name.as_str().to_string(), value.to_str().ok()?.to_string())))
+                headers: parts
+                    .headers
+                    .iter()
+                    .filter_map(|(name, value)| {
+                        Some((name.as_str().to_string(), value.to_str().ok()?.to_string()))
+                    })
                     .collect(),
-                body
+                body,
             };
             net.send_async(outgoing, move |result| {
                 let resp = match result {
                     Ok(page) => page_response(page),
-                    Err(e) => error_response(&e)
+                    Err(e) => error_response(&e),
                 };
                 responder.respond(resp);
             });
         })
         .with_custom_protocol("sonion-nav".into(), |_wv, _request| {
-            wry::http::Response::builder().status(200)
-            .header("Content-Type", "text/html; charset=utf-8")
-            .body(std::borrow::Cow::Borrowed(HOME_PAGE.as_bytes())).unwrap()
-        }).with_url(&target).with_devtools(true).build_as_child(window)?;
+            wry::http::Response::builder()
+                .status(200)
+                .header("Content-Type", "text/html; charset=utf-8")
+                .body(std::borrow::Cow::Borrowed(HOME_PAGE.as_bytes()))
+                .unwrap()
+        })
+        .with_url(&target)
+        .with_devtools(true)
+        .build_as_child(window)?;
     Ok(wv)
 }
 
 fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     linux_env_defaults();
-    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();
-    let settings = registry::settings::Settings::load_or_create().map_err(|e| anyhow::anyhow!("loading config {}: {e}", registry::settings::Settings::path().display()))?;
-    let registry_str = std::env::var("SONION_REGISTRY").unwrap_or_else(|_| settings.registry.clone());
-    let pin_key = std::env::var("SONION_REGISTRY_KEY").ok().or_else(|| settings.pin_key.clone()).or_else(|| registry::settings::default_pin_for(&registry_str));
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+    let settings = registry::settings::Settings::load_or_create().map_err(|e| {
+        anyhow::anyhow!(
+            "loading config {}: {e}",
+            registry::settings::Settings::path().display()
+        )
+    })?;
+    let registry_str =
+        std::env::var("SONION_REGISTRY").unwrap_or_else(|_| settings.registry.clone());
+    let pin_key = std::env::var("SONION_REGISTRY_KEY")
+        .ok()
+        .or_else(|| settings.pin_key.clone())
+        .or_else(|| registry::settings::default_pin_for(&registry_str));
     let insecure_dev = std::env::var("SONION_INSECURE_DEV").is_ok() || settings.insecure_dev;
-    let registry_url = Some(SonionUrl::parse(&registry_str).map_err(|e| anyhow::anyhow!("bad registry url {registry_str}: {e}"))?);
+    let registry_url = Some(
+        SonionUrl::parse(&registry_str)
+            .map_err(|e| anyhow::anyhow!("bad registry url {registry_str}: {e}"))?,
+    );
     let net = NetHandle::spawn(NetStack::new(registry_url, pin_key, insecure_dev));
     let event_loop = EventLoopBuilder::with_user_event().build();
     let proxy: EventLoopProxy<UserEvent> = event_loop.create_proxy();
-    let window_builder = WindowBuilder::new().with_title("Sonion Browser").with_inner_size(tao::dpi::LogicalSize::new(1200.0, 780.0)).with_decorations(false).with_window_icon(app_icon());
+    let window_builder = WindowBuilder::new()
+        .with_title("Sonion Browser")
+        .with_inner_size(tao::dpi::LogicalSize::new(1200.0, 780.0))
+        .with_decorations(false)
+        .with_window_icon(app_icon());
     #[cfg(target_os = "windows")]
     let window_builder = {
         use tao::platform::windows::WindowBuilderExtWindows;
@@ -196,44 +313,67 @@ fn main() -> anyhow::Result<()> {
     };
     let window = Rc::new(window_builder.build(&event_loop)?);
     let web_context = Rc::new(RefCell::new(WebContext::new(None)));
-    let first_wv = spawn_tab_webview(&window, &mut web_context.borrow_mut(), net.clone(), "sonion-nav://home", "tab-1", proxy.clone())?;
+    let first_wv = spawn_tab_webview(
+        &window,
+        &mut web_context.borrow_mut(),
+        net.clone(),
+        "sonion-nav://home",
+        "tab-1",
+        proxy.clone(),
+    )?;
     let mut initial_tabs = HashMap::new();
     initial_tabs.insert("tab-1".to_string(), first_wv);
     let state = Rc::new(RefCell::new(BrowserState {
         tabs: initial_tabs,
         active_tab: "tab-1".to_string(),
         chrome_height: INITIAL_CHROME_HEIGHT,
-        overlay: false
+        overlay: false,
     }));
     let proxy_for_ipc = proxy.clone();
     let bar = WebViewBuilder::new_with_web_context(&mut web_context.borrow_mut())
-        .with_initialization_script(format!("window.__SONION_SETTINGS__ = {}; window.__SONION_PROFILE__ = {};", settings_to_ui(&settings), load_profile()))
+        .with_initialization_script(format!(
+            "window.__SONION_SETTINGS__ = {}; window.__SONION_PROFILE__ = {};",
+            settings_to_ui(&settings),
+            load_profile()
+        ))
         .with_custom_protocol("sonion-nav".into(), move |_wv, request| {
             serve_ui_asset(request.uri().path())
         })
         .with_ipc_handler(move |req| {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(req.body()) {
                 let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
-                let tab_id = v.get("tabId").and_then(|t| t.as_str()).unwrap_or("tab-1").to_string();
-                let url = v.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+                let tab_id = v
+                    .get("tabId")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("tab-1")
+                    .to_string();
+                let url = v
+                    .get("url")
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let ev = match cmd {
-                    "create_tab" => Some(UserEvent::CreateTab {tab_id, url}),
-                    "switch_tab" => Some(UserEvent::SwitchTab {tab_id}),
-                    "close_tab" => Some(UserEvent::CloseTab {tab_id}),
-                    "nav" => Some(UserEvent::Navigate {tab_id, url}),
-                    "reload" => Some(UserEvent::Reload {tab_id}),
-                    "devtools" => Some(UserEvent::DevTools {tab_id}),
+                    "create_tab" => Some(UserEvent::CreateTab { tab_id, url }),
+                    "switch_tab" => Some(UserEvent::SwitchTab { tab_id }),
+                    "close_tab" => Some(UserEvent::CloseTab { tab_id }),
+                    "nav" => Some(UserEvent::Navigate { tab_id, url }),
+                    "reload" => Some(UserEvent::Reload { tab_id }),
+                    "devtools" => Some(UserEvent::DevTools { tab_id }),
                     "set_chrome_height" => {
-                        let height = v.get("height").and_then(|h| h.as_u64()).unwrap_or(INITIAL_CHROME_HEIGHT as u64) as u32;
+                        let height = v
+                            .get("height")
+                            .and_then(|h| h.as_u64())
+                            .unwrap_or(INITIAL_CHROME_HEIGHT as u64)
+                            as u32;
                         let overlay = v.get("overlay").and_then(|o| o.as_bool()).unwrap_or(false);
-                        Some(UserEvent::SetChromeHeight {height, overlay})
+                        Some(UserEvent::SetChromeHeight { height, overlay })
                     }
-                    "external" => Some(UserEvent::OpenExternal {url}),
+                    "external" => Some(UserEvent::OpenExternal { url }),
                     "zoom" => {
                         let zoom = v.get("zoom").and_then(|z| z.as_u64()).unwrap_or(100) as u32;
-                        Some(UserEvent::Zoom {tab_id, zoom})
+                        Some(UserEvent::Zoom { tab_id, zoom })
                     }
-                    "print" => Some(UserEvent::Print {tab_id}),
+                    "print" => Some(UserEvent::Print { tab_id }),
                     "fullscreen" => Some(UserEvent::Fullscreen),
                     "exit" => Some(UserEvent::Exit),
                     "win_minimize" => Some(UserEvent::Minimize),
@@ -242,39 +382,82 @@ fn main() -> anyhow::Result<()> {
                     "win_resize_top" => Some(UserEvent::ResizeTop),
                     "save_settings" => {
                         let s = v.get("settings");
-                        let text = |key: &str| s.and_then(|s| s.get(key)).and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+                        let text = |key: &str| {
+                            s.and_then(|s| s.get(key))
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("")
+                                .trim()
+                                .to_string()
+                        };
                         let pin_key = text("pin_key");
                         let homepage = text("homepage");
-                        Some(UserEvent::SaveSettings {settings: registry::settings::Settings {
-                            registry: text("registry"),
-                            homepage: if homepage.is_empty() || homepage.contains("://") {homepage} else {format!("sonion://{homepage}")},
-                            pin_key: if pin_key.is_empty() {None} else {Some(pin_key)},
-                            insecure_dev: s.and_then(|s| s.get("insecure_dev")).and_then(|x| x.as_bool()).unwrap_or(false)
-                        }})
+                        Some(UserEvent::SaveSettings {
+                            settings: registry::settings::Settings {
+                                registry: text("registry"),
+                                homepage: if homepage.is_empty() || homepage.contains("://") {
+                                    homepage
+                                } else {
+                                    format!("sonion://{homepage}")
+                                },
+                                pin_key: if pin_key.is_empty() {
+                                    None
+                                } else {
+                                    Some(pin_key)
+                                },
+                                insecure_dev: s
+                                    .and_then(|s| s.get("insecure_dev"))
+                                    .and_then(|x| x.as_bool())
+                                    .unwrap_or(false),
+                            },
+                        })
                     }
                     "new_window" => Some(UserEvent::NewWindow),
-                    "save_page" => Some(UserEvent::SavePage {tab_id}),
+                    "save_page" => Some(UserEvent::SavePage { tab_id }),
                     "find" => {
-                        let query = v.get("query").and_then(|q| q.as_str()).unwrap_or("").to_string();
-                        let dir = v.get("dir").and_then(|d| d.as_i64()).unwrap_or(0).clamp(-1, 1);
-                        Some(UserEvent::Find {tab_id, query, dir})
+                        let query = v
+                            .get("query")
+                            .and_then(|q| q.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let dir = v
+                            .get("dir")
+                            .and_then(|d| d.as_i64())
+                            .unwrap_or(0)
+                            .clamp(-1, 1);
+                        Some(UserEvent::Find { tab_id, query, dir })
                     }
-                    "find_clear" => Some(UserEvent::FindClear {tab_id}),
-                    "open_download" => Some(UserEvent::OpenDownload {path: v.get("path").and_then(|p| p.as_str()).unwrap_or("").to_string()}),
-                    "show_download" => Some(UserEvent::ShowDownload {path: v.get("path").and_then(|p| p.as_str()).unwrap_or("").to_string()}),
+                    "find_clear" => Some(UserEvent::FindClear { tab_id }),
+                    "open_download" => Some(UserEvent::OpenDownload {
+                        path: v
+                            .get("path")
+                            .and_then(|p| p.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    }),
+                    "show_download" => Some(UserEvent::ShowDownload {
+                        path: v
+                            .get("path")
+                            .and_then(|p| p.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    }),
                     "save_profile" => {
                         if let Some(profile) = v.get("profile") {
                             save_profile(profile);
                         }
                         None
                     }
-                    _ => None
+                    _ => None,
                 };
                 if let Some(event) = ev {
                     let _ = proxy_for_ipc.send_event(event);
                 }
             }
-        }).with_transparent(true).with_url("sonion-nav://app/index.html").with_devtools(true).build_as_child(&window)?;
+        })
+        .with_transparent(true)
+        .with_url("sonion-nav://app/index.html")
+        .with_devtools(true)
+        .build_as_child(&window)?;
     let window_for_loop = window.clone();
     let web_ctx_for_loop = web_context.clone();
     let state_for_loop = state.clone();
@@ -289,14 +472,14 @@ fn main() -> anyhow::Result<()> {
         match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
-                .. 
+                ..
             } => {
                 net_for_loop.shutdown();
                 *control_flow = ControlFlow::Exit;
             }
             Event::WindowEvent {
                 event: WindowEvent::Resized(_),
-                .. 
+                ..
             } => {
                 if let Ok(st) = state_for_loop.try_borrow() {
                     st.layout(&bar, &window_for_loop);
@@ -395,7 +578,7 @@ fn main() -> anyhow::Result<()> {
                 }
                 UserEvent::Fullscreen => {
                     let next = if window_for_loop.fullscreen().is_some() {
-                        None 
+                        None
                     } else {
                         Some(tao::window::Fullscreen::Borderless(None))
                     };
@@ -518,97 +701,144 @@ struct UiAssets;
 
 fn serve_ui_asset(raw_path: &str) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
     let clean = raw_path.trim_start_matches('/');
-    let rel = if clean.is_empty() {"index.html"} else {clean};
+    let rel = if clean.is_empty() {
+        "index.html"
+    } else {
+        clean
+    };
     let (path, file) = match UiAssets::get(rel) {
         Some(file) => (rel, file),
         None => match UiAssets::get("index.html") {
             Some(file) => ("index.html", file),
             None => {
-                return wry::http::Response::builder().status(500)
+                return wry::http::Response::builder()
+                    .status(500)
                     .header("Content-Type", "text/plain")
-                    .body(std::borrow::Cow::Borrowed(b"UI not built, run `bun install && bun run build` inside browser/ui".as_slice())).unwrap();
+                    .body(std::borrow::Cow::Borrowed(
+                        b"UI not built, run `bun install && bun run build` inside browser/ui"
+                            .as_slice(),
+                    ))
+                    .unwrap();
             }
-        }
+        },
     };
-    let mime = mime_guess::from_path(path).first_or_octet_stream().to_string();
-    wry::http::Response::builder().status(200)
+    let mime = mime_guess::from_path(path)
+        .first_or_octet_stream()
+        .to_string();
+    wry::http::Response::builder()
+        .status(200)
         .header("Content-Type", mime)
-        .body(file.data).unwrap()
+        .body(file.data)
+        .unwrap()
 }
 
 fn page_response(page: FetchedPage) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
-    let has_cors = page.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("access-control-allow-origin"));
-    let mut builder = wry::http::Response::builder().status(page.status).header("Content-Type", &page.content_type);
-    if !has_cors {
-        builder = builder.header("Access-Control-Allow-Origin", "*");
-    }
+    let mut builder = wry::http::Response::builder()
+        .status(page.status)
+        .header("Content-Type", &page.content_type);
     for (name, value) in &page.headers {
-        let value = if name.eq_ignore_ascii_case("location") { to_webview_url(value) } else { value.clone() };
+        let value = if name.eq_ignore_ascii_case("location") {
+            to_webview_url(value)
+        } else {
+            value.clone()
+        };
         builder = builder.header(name.as_str(), value);
     }
-    builder.body(std::borrow::Cow::Owned(page.body)).unwrap_or_else(|_| {
-        wry::http::Response::builder().status(502).header("Content-Type", "text/plain")
-            .body(std::borrow::Cow::Borrowed(b"bad response from site".as_slice())).unwrap()
-    })
-}
-
-fn preflight_response(request: &wry::http::Request<Vec<u8>>) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
-    let allow_headers = request.headers().get("access-control-request-headers")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("*")
-        .to_string();
-    wry::http::Response::builder().status(204)
-        .header("Access-Control-Allow-Origin", "*")
-        .header("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
-        .header("Access-Control-Allow-Headers", allow_headers)
-        .header("Access-Control-Max-Age", "600")
-        .body(std::borrow::Cow::Borrowed(b"".as_slice())).unwrap()
+    builder
+        .body(std::borrow::Cow::Owned(page.body))
+        .unwrap_or_else(|_| {
+            wry::http::Response::builder()
+                .status(502)
+                .header("Content-Type", "text/plain")
+                .body(std::borrow::Cow::Borrowed(
+                    b"bad response from site".as_slice(),
+                ))
+                .unwrap()
+        })
 }
 
 fn error_response(err: &FetchError) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
     let (title, code, tips): (&str, &str, &[&str]) = match err {
-        FetchError::BadUrl(_) => ("This address isn't valid", "ERR_INVALID_URL", &[
-            "Check the address for typos",
-            "Addresses look like sonion://name.tld"
-        ]),
-        FetchError::Resolve(_) => ("This site can't be reached", "ERR_NAME_NOT_RESOLVED", &[
-            "Check the spelling of the address",
-            "Make sure the registry server is running",
-            "Check the registry address in Settings"
-        ]),
-        FetchError::Request(_) => ("Can't open this page", "ERR_SONION_CONNECTION_FAILED", &[
-            "Make sure the site's server is running",
-            "Reload the page",
-            "Restart the browser"
-        ])
+        FetchError::BadUrl(_) => (
+            "This address isn't valid",
+            "ERR_INVALID_URL",
+            &[
+                "Check the address for typos",
+                "Addresses look like sonion://name.tld",
+            ],
+        ),
+        FetchError::Resolve(_) => (
+            "This site can't be reached",
+            "ERR_NAME_NOT_RESOLVED",
+            &[
+                "Check the spelling of the address",
+                "Make sure the registry server is running",
+                "Check the registry address in Settings",
+            ],
+        ),
+        FetchError::Request(_) => (
+            "Can't open this page",
+            "ERR_SONION_CONNECTION_FAILED",
+            &[
+                "Make sure the site's server is running",
+                "Reload the page",
+                "Restart the browser",
+            ],
+        ),
     };
-    let tips_html: String = tips.iter().map(|t| format!("<li>{}</li>", html_escape(t))).collect();
+    let tips_html: String = tips
+        .iter()
+        .map(|t| format!("<li>{}</li>", html_escape(t)))
+        .collect();
     let html = ERROR_PAGE
         .replace("{{title}}", title)
         .replace("{{code}}", code)
         .replace("{{tips}}", &tips_html)
         .replace("{{detail}}", &html_escape(&err.to_string()));
-    wry::http::Response::builder().status(502).header("Content-Type", "text/html; charset=utf-8").body(std::borrow::Cow::Owned(html.into_bytes())).unwrap()
+    wry::http::Response::builder()
+        .status(502)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(std::borrow::Cow::Owned(html.into_bytes()))
+        .unwrap()
 }
 
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn notify_bar(bar: &WebView, payload: &serde_json::Value) {
-    let _ = bar.evaluate_script(&format!("window._onNativeEvent && window._onNativeEvent({});", payload));
+    let _ = bar.evaluate_script(&format!(
+        "window._onNativeEvent && window._onNativeEvent({});",
+        payload
+    ));
 }
 
 fn notify_download(bar: &WebView, id: u64, url: &str, path: &std::path::Path, state: &str) {
-    let file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    notify_bar(bar, &serde_json::json!({
-        "event": "download",
-        "tabId": "",
-        "download": {"id": id, "url": url, "path": path.to_string_lossy(), "fileName": file_name, "state": state}
-    }));
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    notify_bar(
+        bar,
+        &serde_json::json!({
+            "event": "download",
+            "tabId": "",
+            "download": {"id": id, "url": url, "path": path.to_string_lossy(), "fileName": file_name, "state": state}
+        }),
+    );
 }
 
-fn start_download(net: &NetHandle, proxy: &EventLoopProxy<UserEvent>, bar: &WebView, id: u64, url: String, path: PathBuf) {
+fn start_download(
+    net: &NetHandle,
+    proxy: &EventLoopProxy<UserEvent>,
+    bar: &WebView,
+    id: u64,
+    url: String,
+    path: PathBuf,
+) {
     notify_download(bar, id, &url, &path, "in_progress");
     let proxy = proxy.clone();
     let fetch_url = url.clone();
@@ -620,9 +850,9 @@ fn start_download(net: &NetHandle, proxy: &EventLoopProxy<UserEvent>, bar: &WebV
                 }
                 std::fs::write(&path, &page.body).is_ok()
             }
-            _ => false
+            _ => false,
         };
-        let _ = proxy.send_event(UserEvent::DownloadFinished {id, url, path, ok});
+        let _ = proxy.send_event(UserEvent::DownloadFinished { id, url, path, ok });
     });
 }
 
@@ -631,24 +861,43 @@ fn unique_path(path: PathBuf) -> PathBuf {
         return path;
     }
     let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-    let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "download".to_string());
-    let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
-    (1..).map(|n| dir.join(format!("{stem} ({n}){ext}"))).find(|p| !p.exists()).unwrap_or(path)
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "download".to_string());
+    let ext = path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    (1..)
+        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
+        .find(|p| !p.exists())
+        .unwrap_or(path)
 }
 
 fn downloads_dir() -> PathBuf {
-    std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
         .map(|home| PathBuf::from(home).join("Downloads"))
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn page_file_name(url: &str) -> String {
     let rest = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
-    let rest = rest.split(|c: char| c == '?' || c == '#').next().unwrap_or(rest);
+    let rest = rest.split(['?', '#']).next().unwrap_or(rest);
     let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
     let last = path.rsplit('/').next().unwrap_or("");
     let base = if last.is_empty() { host } else { last };
-    let mut name: String = base.chars().map(|c| if c.is_control() || "<>:\"/\\|?*".contains(c) { '_' } else { c }).collect();
+    let mut name: String = base
+        .chars()
+        .map(|c| {
+            if c.is_control() || "<>:\"/\\|?*".contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
     let lower = name.to_ascii_lowercase();
     if !lower.ends_with(".html") && !lower.ends_with(".htm") {
         name.push_str(".html");
@@ -669,8 +918,14 @@ fn validate_and_save(settings: &registry::settings::Settings) -> Result<SonionUr
     if settings.homepage.is_empty() {
         return Err("Homepage can't be empty".to_string());
     }
-    let registry_url = SonionUrl::parse(&settings.registry).map_err(|e| format!("Bad registry address: {e}"))?;
-    settings.save().map_err(|e| format!("Couldn't save {}: {e}", registry::settings::Settings::path().display()))?;
+    let registry_url =
+        SonionUrl::parse(&settings.registry).map_err(|e| format!("Bad registry address: {e}"))?;
+    settings.save().map_err(|e| {
+        format!(
+            "Couldn't save {}: {e}",
+            registry::settings::Settings::path().display()
+        )
+    })?;
     Ok(registry_url)
 }
 
@@ -686,8 +941,11 @@ fn app_icon() -> Option<tao::window::Icon> {
             let dy = y as f32 + 0.5 - center;
             let d = (dx * dx + dy * dy).sqrt() / scale;
             let disc = ((24.0 - d) * scale + 0.5).clamp(0.0, 1.0);
-            let ring = rings.iter()
-                .map(|&(r, opacity)| ((1.0 - (d - r).abs()) * scale + 0.5).clamp(0.0, 1.0) * opacity)
+            let ring = rings
+                .iter()
+                .map(|&(r, opacity)| {
+                    ((1.0 - (d - r).abs()) * scale + 0.5).clamp(0.0, 1.0) * opacity
+                })
                 .fold(0.0f32, f32::max);
             let v = (ring * 255.0).round() as u8;
             rgba.extend_from_slice(&[v, v, v, (disc * 255.0).round() as u8]);
@@ -701,7 +959,8 @@ fn profile_path() -> PathBuf {
 }
 
 fn load_profile() -> serde_json::Value {
-    std::fs::read_to_string(profile_path()).ok()
+    std::fs::read_to_string(profile_path())
+        .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(serde_json::Value::Null)
 }
@@ -719,7 +978,10 @@ fn save_profile(profile: &serde_json::Value) {
 
 #[cfg(target_os = "windows")]
 fn open_in_default_browser(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("rundll32.exe").args(["url.dll,FileProtocolHandler", url]).spawn().map(|_| ())
+    std::process::Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", url])
+        .spawn()
+        .map(|_| ())
 }
 #[cfg(target_os = "windows")]
 fn to_webview_url(url: &str) -> String {
@@ -736,7 +998,15 @@ fn raise_webview(wv: &WebView) {
     use wry::WebViewExtWindows;
     #[link(name = "user32")]
     extern "system" {
-        fn SetWindowPos(hwnd: *mut std::ffi::c_void, after: *mut std::ffi::c_void, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+        fn SetWindowPos(
+            hwnd: *mut std::ffi::c_void,
+            after: *mut std::ffi::c_void,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
     }
     const SWP_NOSIZE: u32 = 0x0001;
     const SWP_NOMOVE: u32 = 0x0002;
@@ -744,41 +1014,71 @@ fn raise_webview(wv: &WebView) {
     unsafe {
         let mut hwnd = Default::default();
         if wv.controller().ParentWindow(&mut hwnd).is_ok() {
-            SetWindowPos(hwnd.0, std::ptr::null_mut(), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            SetWindowPos(
+                hwnd.0,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
         }
     }
 }
 #[cfg(target_os = "windows")]
 fn from_webview_url(url: &str) -> Option<String> {
-    url.strip_prefix("http://sonion.").map(|rest| format!("sonion://{rest}"))
+    url.strip_prefix("http://sonion.")
+        .map(|rest| format!("sonion://{rest}"))
 }
 #[cfg(target_os = "windows")]
 fn open_path(path: &str) -> std::io::Result<()> {
-    std::process::Command::new("explorer.exe").arg(path).spawn().map(|_| ())
+    std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
 }
 #[cfg(target_os = "windows")]
 fn reveal_in_folder(path: &str) -> std::io::Result<()> {
     use std::os::windows::process::CommandExt;
-    std::process::Command::new("explorer.exe").raw_arg(format!("/select,\"{path}\"")).spawn().map(|_| ())
+    std::process::Command::new("explorer.exe")
+        .raw_arg(format!("/select,\"{path}\""))
+        .spawn()
+        .map(|_| ())
 }
 
 #[cfg(target_os = "macos")]
 fn open_in_default_browser(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("open").arg(url).spawn().map(|_| ())
+    std::process::Command::new("open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
 }
 #[cfg(target_os = "macos")]
 fn reveal_in_folder(path: &str) -> std::io::Result<()> {
-    std::process::Command::new("open").arg("-R").arg(path).spawn().map(|_| ())
+    std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn open_in_default_browser(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("xdg-open").arg(url).spawn().map(|_| ())
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
 }
 #[cfg(all(unix, not(target_os = "macos")))]
 fn reveal_in_folder(path: &str) -> std::io::Result<()> {
-    let dir = std::path::Path::new(path).parent().unwrap_or(std::path::Path::new("."));
-    std::process::Command::new("xdg-open").arg(dir).spawn().map(|_| ())
+    let dir = std::path::Path::new(path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    std::process::Command::new("xdg-open")
+        .arg(dir)
+        .spawn()
+        .map(|_| ())
 }
 
 #[cfg(not(target_os = "windows"))]

@@ -10,7 +10,7 @@ pub struct Request {
     pub method: String,
     pub path: String,
     pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>
+    pub body: Vec<u8>,
 }
 
 impl Request {
@@ -19,7 +19,7 @@ impl Request {
             method: method.into(),
             path: path.into(),
             headers: Vec::new(),
-            body: Vec::new()
+            body: Vec::new(),
         }
     }
     pub fn get(path: &str) -> Self {
@@ -27,7 +27,7 @@ impl Request {
             method: "GET".into(),
             path: path.into(),
             headers: Vec::new(),
-            body: Vec::new()
+            body: Vec::new(),
         }
     }
     pub fn head(path: &str) -> Self {
@@ -41,9 +41,9 @@ impl Request {
     pub fn post(path: &str, body: impl Into<Vec<u8>>) -> Self {
         Self {
             method: "POST".into(),
-            path:path.into(), 
+            path: path.into(),
             headers: Vec::new(),
-            body: body.into()
+            body: body.into(),
         }
     }
     pub fn put(path: &str, body: impl Into<Vec<u8>>) -> Self {
@@ -51,7 +51,7 @@ impl Request {
             method: "PUT".into(),
             path: path.into(),
             headers: Vec::new(),
-            body: body.into()
+            body: body.into(),
         }
     }
     pub fn delete(path: &str) -> Self {
@@ -59,7 +59,7 @@ impl Request {
             method: "DELETE".into(),
             path: path.into(),
             headers: Vec::new(),
-            body: Vec::new()
+            body: Vec::new(),
         }
     }
     pub fn header(mut self, name: &str, value: &str) -> Self {
@@ -75,11 +75,17 @@ impl Request {
         self
     }
     pub fn get_header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = format!("{} {} {VERSION}{CRLF}", self.method, self.path);
-        let has_cl = self.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("Content-Length"));
+        let has_cl = self
+            .headers
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case("Content-Length"));
         for (name, value) in &self.headers {
             out.push_str(&format!("{name}: {value}{CRLF}"));
         }
@@ -98,7 +104,8 @@ impl Request {
                 max: limits::MAX_HEADERS,
             });
         }
-        let head = std::str::from_utf8(&bytes[..header_end]).map_err(|_| ProtocolError::MalformedLine("non-utf8 head".into()))?;
+        let head = std::str::from_utf8(&bytes[..header_end])
+            .map_err(|_| ProtocolError::MalformedLine("non-utf8 head".into()))?;
         let mut lines = head.split(CRLF);
         let request_line = lines.next().ok_or(ProtocolError::UnexpectedEof)?;
         if request_line.len() > limits::MAX_REQUEST_LINE {
@@ -122,7 +129,9 @@ impl Request {
             )));
         }
         if !METHODS.contains(&method) {
-            return Err(ProtocolError::MalformedLine(format!("bad method: {method}")));
+            return Err(ProtocolError::MalformedLine(format!(
+                "bad method: {method}"
+            )));
         }
         if !path.starts_with('/') {
             return Err(ProtocolError::MalformedLine(format!(
@@ -132,12 +141,15 @@ impl Request {
         let headers = parse_headers(lines)?;
         let mut req = Self {
             method: method.into(),
-            path: path.into(), 
+            path: path.into(),
             headers,
-            body: Vec::new()
+            body: Vec::new(),
         };
         if let Some(len) = req.get_header("Content-Length") {
-            let len: usize = len.trim().parse().map_err(|_| ProtocolError::InvalidHeader("Content-Length".into()))?;
+            let len: usize = len
+                .trim()
+                .parse()
+                .map_err(|_| ProtocolError::InvalidHeader("Content-Length".into()))?;
             if len > limits::MAX_BODY {
                 return Err(ProtocolError::BodyTooLarge {
                     max: limits::MAX_BODY,

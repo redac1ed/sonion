@@ -1,11 +1,11 @@
 use crate::ALPN;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::WebPkiSupportedAlgorithms;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::version::TLS13;
 use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
-use std::sync::Arc;
-use rustls::crypto::WebPkiSupportedAlgorithms;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 pub fn client_config(insecure_dev: bool) -> ClientConfig {
     let builder = ClientConfig::builder_with_protocol_versions(&[&TLS13]);
@@ -32,7 +32,7 @@ pub fn pinned_client_config(cert_sha256: &str) -> ClientConfig {
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(PinnedVerifier {
             cert_sha256: cert_sha256.to_string(),
-            algorithms
+            algorithms,
         }))
         .with_no_client_auth();
     config.alpn_protocols = vec![ALPN.as_bytes().to_vec()];
@@ -41,13 +41,16 @@ pub fn pinned_client_config(cert_sha256: &str) -> ClientConfig {
 }
 
 pub fn cert_fingerprint(der: &[u8]) -> String {
-    Sha256::digest(der).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(der)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 #[derive(Debug)]
 struct PinnedVerifier {
     cert_sha256: String,
-    algorithms: WebPkiSupportedAlgorithms
+    algorithms: WebPkiSupportedAlgorithms,
 }
 impl ServerCertVerifier for PinnedVerifier {
     fn verify_server_cert(
@@ -61,7 +64,9 @@ impl ServerCertVerifier for PinnedVerifier {
         if cert_fingerprint(end_entity) == self.cert_sha256 {
             Ok(ServerCertVerified::assertion())
         } else {
-            Err(rustls::Error::General("certificate does not match the fingerprint in the domain record".into()))
+            Err(rustls::Error::General(
+                "certificate does not match the fingerprint in the domain record".into(),
+            ))
         }
     }
     fn verify_tls12_signature(

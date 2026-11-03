@@ -473,6 +473,8 @@
                         if (who.registered) {
                             say(status, `${name} is taken.`, "bad");
                             result.append(h("a", {href: `#/whois/${name}`, textContent: "See who has it"}));
+                        } else if (who.reserved) {
+                            say(status, `${name} is reserved.`, "bad");
                         } else if (session()) {
                             say(status, `${name} is available.`, "good");
                             result.append(h("div", {className: "card"}, domainForm(name, null, () => {

@@ -64,7 +64,7 @@ async fn slow_loris_killed_by_head_deadline() {
     }
     let mut buf = [0u8; 64];
     let read = tokio::time::timeout(Duration::from_secs(3), tls.read(&mut buf)).await;
-    match (server_cut_us,read) {
+    match (server_cut_us, read) {
         (_, Ok(Ok(0)) | Ok(Err(_)) | Err(_)) => {}
         (_, Ok(Ok(n))) => {
             let text = String::from_utf8_lossy(&buf[..n]);
@@ -82,7 +82,7 @@ async fn client_closing_mid_request_does_not_wedge_server() {
     for _ in 0..20 {
         let mut tls = raw_tls(port).await;
         tls.write_all(b"GET / SONION/1.0\r\nHost:").await.unwrap();
-        drop(tls); 
+        drop(tls);
     }
     let r = fetch(&url(port, "/"), true).await.unwrap();
     assert_eq!(r.status, Status::Ok);
@@ -136,15 +136,19 @@ async fn partial_body_eventually_times_out() {
     config.alpn_protocols = vec![sonion_protocol::ALPN.as_bytes().to_vec()];
     let acceptor = TlsAcceptor::from(Arc::new(config));
     tokio::spawn(async move {
-        let Ok((tcp, _)) = listener.accept().await else { return };
-        let Ok(mut tls) = acceptor.accept(tcp).await else { return };
+        let Ok((tcp, _)) = listener.accept().await else {
+            return;
+        };
+        let Ok(mut tls) = acceptor.accept(tcp).await else {
+            return;
+        };
         let mut buf = [0u8; 4096];
-        let _ = tls.read(&mut buf).await; 
+        let _ = tls.read(&mut buf).await;
         tls.write_all(b"SONION/1.0 200 ok\r\nContent-Length: 100\r\n\r\nhello")
             .await
             .unwrap();
         tls.flush().await.unwrap();
-        tokio::time::sleep(Duration::from_secs(120)).await; 
+        tokio::time::sleep(Duration::from_secs(120)).await;
     });
     let start = std::time::Instant::now();
     let result = fetch(&url(port, "/"), true).await;

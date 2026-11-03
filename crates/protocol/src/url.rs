@@ -5,7 +5,7 @@ pub struct SonionUrl {
     pub host: String,
     pub port: u16,
     pub path: String,
-    pub query: Option<String>
+    pub query: Option<String>,
 }
 
 impl Default for SonionUrl {
@@ -14,7 +14,7 @@ impl Default for SonionUrl {
             host: String::new(),
             port: DEFAULT_PORT,
             path: "/".into(),
-            query: None
+            query: None,
         }
     }
 }
@@ -44,24 +44,26 @@ impl SonionUrl {
             return Err(ProtocolError::InvalidUrl("empty host".into()));
         }
         let (raw_path, raw_query) = match path_and_query.find('?') {
-            Some(i) => (
-                &path_and_query[..i],
-                Some(&path_and_query[i + 1..])
-            ),
-            None => (path_and_query, None)
+            Some(i) => (&path_and_query[..i], Some(&path_and_query[i + 1..])),
+            None => (path_and_query, None),
         };
-        let path = canonicalize_path(&decode_path(raw_path)?)?; 
+        let path = canonicalize_path(&decode_path(raw_path)?)?;
         let query = match raw_query {
             Some(q) => {
                 let decoded = decode_path(q)?;
-                if decoded.bytes().any(|b| b < 0x20 || b ==0x7f) {
+                if decoded.bytes().any(|b| b < 0x20 || b == 0x7f) {
                     return Err(ProtocolError::InvalidUrl("control char in query".into()));
                 }
                 Some(decoded)
             }
-            None => None
+            None => None,
         };
-        Ok(Self { host, port, path, query })
+        Ok(Self {
+            host,
+            port,
+            path,
+            query,
+        })
     }
     pub fn encoded_path(&self) -> String {
         let mut out = encode_path(&self.path);
@@ -132,8 +134,21 @@ pub fn encode_query(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for &b in s.as_bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/'
-            | b'=' | b'&' | b'+' | b':' | b'@' | b',' | b';' => out.push(b as char),
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'.'
+            | b'_'
+            | b'~'
+            | b'/'
+            | b'='
+            | b'&'
+            | b'+'
+            | b':'
+            | b'@'
+            | b','
+            | b';' => out.push(b as char),
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
@@ -153,7 +168,10 @@ pub fn parse_query(query: &str) -> Vec<(String, String)> {
                 pairs.push((k, v));
             }
             None => {
-                pairs.push((decode_path(part).unwrap_or_else(|_| part.to_string()), String::new()));
+                pairs.push((
+                    decode_path(part).unwrap_or_else(|_| part.to_string()),
+                    String::new(),
+                ));
             }
         }
     }
@@ -167,10 +185,14 @@ pub fn canonicalize_path(decoded: &str) -> Result<String, ProtocolError> {
         )));
     }
     if decoded.bytes().any(|b| b < 0x20 || b == 0x7f) {
-        return Err(ProtocolError::InvalidUrl(format!("control char in path: {decoded:?}")));
+        return Err(ProtocolError::InvalidUrl(format!(
+            "control char in path: {decoded:?}"
+        )));
     }
     if decoded.contains('\\') {
-        return Err(ProtocolError::InvalidUrl(format!("backslash not allowed in path: {decoded}")));
+        return Err(ProtocolError::InvalidUrl(format!(
+            "backslash not allowed in path: {decoded}"
+        )));
     }
     let mut segments: Vec<&str> = Vec::new();
     for seg in decoded.split('/') {
@@ -217,7 +239,7 @@ mod tests {
         let u = SonionUrl::parse("sonion://h/search?q=h").unwrap();
         assert_eq!(u.path, "/search");
         assert_eq!(u.query.as_deref(), Some("q=h"));
-        assert_eq!(u.encoded_path(), "/search?q=h")   
+        assert_eq!(u.encoded_path(), "/search?q=h")
     }
     #[test]
     fn query_pairs_roundtrip() {
@@ -254,6 +276,9 @@ mod tests {
     }
     #[test]
     fn canonicalizes_dot_segments() {
-        assert_eq!(SonionUrl::parse("sonion://h/a/.b/../c").unwrap().path, "/a/c");
+        assert_eq!(
+            SonionUrl::parse("sonion://h/a/.b/../c").unwrap().path,
+            "/a/c"
+        );
     }
 }
